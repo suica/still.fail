@@ -10,10 +10,14 @@ test "an agent's labels and values stay in columns in both languages, including 
       for scale in [1.0, 1.3] {
         t.set_font_scale(scale)
         t.frame()
-        let (station_x, _) = t.find_last("Station").unwrap()
+        let station = t.words().filter(fn(w) { w.0 == "Station" && w.5 > 0.5 })
+        assert_true(!station.is_empty(), msg="\{lang} \{mode} \{scale}: Station")
+        let station_x = station[station.length() - 1].1
         let labels = if lang == "zh" { ["账号", "历史"] } else { ["Account", "History"] }
         for label in labels {
-          let (x, _) = t.find_last(label).unwrap()
+          let words = t.words().filter(fn(w) { w.0 == label && w.5 > 0.5 })
+          assert_true(!words.is_empty(), msg="\{lang} \{mode} \{scale}: \{label}")
+          let x = words[words.length() - 1].1
           assert_true((x - station_x).abs() < 0.6, msg="\{lang} \{mode} \{scale}: \{label} and Station")
         }
         let account = if lang == "zh" { "林的 Max · 自动" } else { "林的 Max · auto" }
