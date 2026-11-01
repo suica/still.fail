@@ -22,12 +22,22 @@ jobs:
         run: bash apps/mbui/scripts/check.sh
       - name: Build the app test program
         run: TARGETS=native PARTS=app APP_GROUP=1/4 APP_BUILD_OUT="$RUNNER_TEMP/app-test" bash apps/mbui/scripts/test.sh
-      - name: Check the screens
-        run: bash apps/mbui/scripts/screens.sh test
       - uses: actions/upload-artifact@v4
         with:
           name: app-test
           path: ${{ runner.temp }}/app-test/
+      - name: Check agent sheet interactions and alignment
+        working-directory: apps/mbui
+        run: |
+          . scripts/env.sh
+          if moon_test_native -p stillfail/sfapp --file station_peek_wbtest.mbt > "$RUNNER_TEMP/agent-test.log" 2>&1; then
+            tail -4 "$RUNNER_TEMP/agent-test.log"
+          else
+            tail -80 "$RUNNER_TEMP/agent-test.log"
+            exit 1
+          fi
+      - name: Check the screens
+        run: bash apps/mbui/scripts/screens.sh test
   app:
     name: app-${{ matrix.group }}
     needs: app-build
