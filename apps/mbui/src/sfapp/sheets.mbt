@@ -851,6 +851,7 @@ fn agent_label(c : @ui.Ctx, label : String, width : Double) -> Unit {
 }
 
 ///|
+// kept across runs: a value (no field of it changes)
 let agent_row_label : @ui.TextStyle = @ui.text_style(size=Meta, color=Muted, wrap=false)
 
 ///|
