@@ -785,7 +785,7 @@ fn fx_cx_more() -> Array[(String, Json)] {
   let left = 2 - fx.resets_used
   [
     ("modelsText", str("1 个模型")),
-    ("models", ["gpt-6-mini"]),
+    ("models", if fx.motion == 0 { [] } else { ["gpt-6"] }),
     ("available", Json::array(ids.map(str))),
     ("names", Json::object(names)),
     ("series", fx_cx_series(ids)),
