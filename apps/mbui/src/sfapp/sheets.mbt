@@ -700,8 +700,16 @@ fn agent_body(c : @ui.Ctx, src : Source, r : ChatRef, key : String, close : () -
     agent_tiles(c, card, 14.0, entry~)
     agent_notes(c, card, 10.0)
     c.box(h=Px(12.0), fn() {  }) |> ignore
-    // All rows share a column wide enough for their labels in this language, even when an optional row is absent.
-    let labels = ["station", "screen", "account", "history", "context", "jobs"].map(fn(k) { tr("android-chat.agent." + k) })
+    let screens = match view_of_chat(src, r).0 {
+      Some(v) => v.screens
+      None => []
+    }
+    // All visible rows share a column wide enough for their labels in this language and at this text size.
+    let labels = [tr("android-chat.agent.account"), tr("android-chat.agent.history")]
+    if station is Some(_) { labels.push(tr("android-chat.agent.station")) }
+    if screens.length() > 0 { labels.push(tr("android-chat.agent.screen")) }
+    if entry is Some(_) && !(field(card, "context") is Some(Object(_))) { labels.push(tr("android-chat.agent.context")) }
+    if jobs.length() > 0 { labels.push(tr("android-chat.agent.jobs")) }
     let label_w = labels.fold(init=0.0, fn(w, label) { dmax(w, c.words_across(label, agent_row_label).ceil()) })
     info_list(c, fn() {
       match station {
@@ -725,10 +733,6 @@ fn agent_body(c : @ui.Ctx, src : Source, r : ChatRef, key : String, close : () -
       }
       // the screens of that station a tap away (chat_screens.mbt): its own display named, or that an agent drives one;
       // the one alone opened, more a menu of them, this card gone first
-      let screens = match view_of_chat(src, r).0 {
-        Some(v) => v.screens
-        None => []
-      }
       if screens.length() > 0 {
         let value = if chat_screens_driven(screens) {
           tr("web-pages.chat.screenAgent")
