@@ -6,13 +6,9 @@ on:
 permissions:
   contents: read
 jobs:
-  native:
+  app-build:
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        part: [app, replay]
     steps:
       - uses: actions/checkout@v5
       - name: Install MoonBit
@@ -24,15 +20,81 @@ jobs:
           echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
           echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
           moon version --all
-      - name: Native app tests
+      - name: Build the app test program
         shell: bash
         env:
-          PARTS: ${{ matrix.part }}
+          PARTS: app
           TARGETS: native
+          APP_GROUP: 1/4
+          APP_BUILD_OUT: ${{ runner.temp }}/app-test
           MBC_REAL_CC: clang
-          SFAPP_SHARDS: 4
+          MBC_JOBS: 2
+          TIMES: 1
           LINES_OUT: 80
         run: bash apps/mbui/scripts/test.sh
-      - name: App static checks
-        if: matrix.part == 'replay'
-        run: bash apps/mbui/scripts/check.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-test
+          path: ${{ runner.temp }}/app-test
+          retention-days: 1
+  app:
+    needs: app-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1/4, 2/4, 3/4, 4/4, contrast]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-test
+          path: ${{ runner.temp }}/app-test
+      - name: Run app tests
+        shell: bash
+        env:
+          TARGETS: native
+          PARTS: app
+          APP_GROUP: ${{ matrix.group }}
+          APP_EXE: ${{ runner.temp }}/app-test/sfapp.whitebox_test.exe
+          APP_INFO: ${{ runner.temp }}/app-test/__whitebox_test_info.json
+          TESTEXE: ${{ runner.temp }}/app-test/testexe
+          SFAPP_SHARDS: 4
+          TIMES: 1
+          LINES_OUT: 80
+        run: |
+          chmod +x "$APP_EXE" "$TESTEXE"
+          bash apps/mbui/scripts/test.sh
+  other:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [packages, replay]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: Run tests and checks
+        shell: bash
+        env:
+          TARGETS: native
+          MBC_REAL_CC: clang
+          MBC_JOBS: 2
+          TIMES: 1
+          LINES_OUT: 80
+        run: |
+          if [ '${{ matrix.part }}' = packages ]; then
+            PARTS=app APP_GROUP=pkgs bash apps/mbui/scripts/test.sh
+          else
+            PARTS=replay bash apps/mbui/scripts/test.sh
+            bash apps/mbui/scripts/check.sh
+          fi
