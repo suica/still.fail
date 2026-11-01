@@ -1,0 +1,36 @@
+name: Model selection application tests
+on:
+  push:
+    branches: [verify-model-shards]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [pkgs, '1/4', '2/4', '3/4', '4/4', contrast]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: Test app
+        shell: bash
+        env:
+          APP_GROUP: ${{ matrix.group }}
+        run: |
+          export MBC_LOG="$RUNNER_TEMP/mbc.log"
+          TIMES=1 MBC_REAL_CC=clang TARGETS=native PARTS=app SFAPP_SHARDS=4 LINES_OUT=80 bash apps/mbui/scripts/test.sh
+      - name: Compiler diagnostics
+        if: always()
+        shell: bash
+        run: |
+          test ! -f "$RUNNER_TEMP/mbc.log" || tail -100 "$RUNNER_TEMP/mbc.log"
