@@ -1,0 +1,106 @@
+name: Profile tier verification
+on:
+  push:
+    branches: [ci-profile-subscription-tier]
+permissions:
+  contents: read
+jobs:
+  typescript:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - run: npm install --global pnpm@10.33.0
+      - run: pnpm --dir station install --frozen-lockfile
+      - run: pnpm --dir client/core-ts install --frozen-lockfile
+      - run: node client/core-ts/scripts/shapes.ts --check
+      - run: pnpm --dir station run check
+      - run: pnpm --dir client/core-ts run check
+      - name: Station subscription checks
+        working-directory: station
+        run: node ../scripts/native.ts run mesh runner -- node --import ./test/setup-env.mjs --test --test-timeout=600000 test/accounts-check.test.ts test/accounts-login.test.ts test/accounts-quota.test.ts test/accounts-routes.test.ts test/grok.test.ts
+      - name: Client profile presentation
+        working-directory: client/core-ts
+        run: node ../../scripts/native.ts run mesh -- node --test --test-force-exit test/views.test.ts test/present.test.ts
+  app:
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: Check app
+        run: bash apps/mbui/scripts/check.sh
+      - name: Profile page and list tests
+        run: |
+          cd apps/mbui
+          . scripts/env.sh
+          native_tests "$PWD"
+          moon test $NATIVE -p stillfail/sfpages --file accounts_wbtest.mbt
+          moon test $NATIVE -p stillfail/sfapp --file settings_wbtest.mbt --index 15-17
+          moon test $NATIVE -p stillfail/sfapp --file desk_profile_wbtest.mbt --index 0-1
+  screenshots:
+    if: ${{ false }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 3
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: Install browser
+        run: |
+          mkdir -p apps/mbui/out/node
+          cd apps/mbui/out/node
+          npm init -y
+          npm install playwright pngjs
+          npx playwright install --with-deps chromium
+      - name: Capture after and before with the same fixture
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/mbui/scripts/web-shots.mjs')
+          s = p.read_text().replace("args: ['--autoplay-policy=no-user-gesture-required']", "args: ['--autoplay-policy=no-user-gesture-required', '--enable-unsafe-swiftshader', '--use-gl=angle', '--use-angle=swiftshader']")
+          s = s.replace("      try {\n        const page = await ctx.newPage();", "      const page = await ctx.newPage();\n      page.on('pageerror', e => console.log('PAGE ERROR', e.stack));\n      page.on('console', m => console.log('BROWSER', m.type(), m.text()));\n      try {")
+          s = s.replace("      } catch (e) {\n        console.log(`", "      } catch (e) {\n        await page.screenshot({ path: out.replace('.png', '-debug.png') }).catch(() => {});\n        console.log('HOST LOGS', JSON.stringify(await page.evaluate(() => window.__logs?.slice(-20)).catch(() => [])));\n        console.log(`")
+          p.write_text(s)
+          PY
+          mkdir -p "$RUNNER_TEMP/evidence"
+          SHOT_JOBS=1 SHOT_DEADLINE=150000 SETTINGS_PAGES='profiles profile' bash apps/mbui/scripts/shots.sh web-settings
+          cp apps/mbui/out/shots/web-settings-profiles.png "$RUNNER_TEMP/evidence/after-list.png"
+          cp apps/mbui/out/shots/web-settings-profile.png "$RUNNER_TEMP/evidence/after-detail.png"
+          for p in apps/mbui/src/sfapp/settings/profiles.mbt apps/mbui/src/sfapp/settings/profile_new.mbt apps/mbui/src/sfdesk/places.mbt apps/mbui/src/sfpages/accounts.mbt; do
+            git show HEAD~2:"$p" > "$p"
+          done
+          SHOT_JOBS=1 SHOT_DEADLINE=150000 SETTINGS_PAGES='profiles profile' bash apps/mbui/scripts/shots.sh web-settings
+          cp apps/mbui/out/shots/web-settings-profiles.png "$RUNNER_TEMP/evidence/before-list.png"
+          cp apps/mbui/out/shots/web-settings-profile.png "$RUNNER_TEMP/evidence/before-detail.png"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: profile-tier-screenshots
+          path: |
+            ${{ runner.temp }}/evidence/*.png
+            apps/mbui/out/shots/*-debug.png
