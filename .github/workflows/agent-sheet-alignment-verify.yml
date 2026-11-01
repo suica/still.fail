@@ -13,6 +13,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+          package-manager-cache: false
       - name: Install MoonBit
         run: |
           curl -fsSL --retry 3 https://cli.moonbitlang.com/install/unix.sh | bash
@@ -33,6 +34,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
+          package-manager-cache: false
       - name: Install MoonBit and browser
         run: |
           curl -fsSL --retry 3 https://cli.moonbitlang.com/install/unix.sh | bash
