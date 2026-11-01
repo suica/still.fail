@@ -183,7 +183,7 @@ fn profile_head(c : @ui.Ctx, core : Core, here : Here, address : String, name : 
   } else {
     text(entry, "where")
   }
-  let facts = join([text(p, "kindText"), if email != text(p, "name") { email } else { "" }, place], " · ")
+  let facts = join([text(p, "kindText"), text(p, "planText"), if email != text(p, "name") { email } else { "" }, place], " · ")
   @sf.own_head(
     c,
     fn(_) { @sf.maker_mark(c, text(p, "providerMark"), text(p, "runtime"), pf_mark_glyph) |> ignore },

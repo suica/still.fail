@@ -319,6 +319,8 @@ test "profiles, connects, the vault: their lists" {
   let t = settings_tester("profiles")
   assert_true(t.find("Claude 主账号") is Some(_))
   assert_true(t.find("Claude 订阅") is Some(_))
+  assert_true(t.find("Ultra") is Some(_), msg="the subscription's tier in its row")
+  assert_true(t.find("Pro 200") is Some(_), msg="the Codex subscription's tier in its row")
   // its allowance a line of its own under its words, at the row's start (Profiles.kt)
   let (nx, ny) = t.find("Claude 主账号").unwrap()
   let (qx, qy) = t.find("62%").unwrap()
@@ -337,6 +339,14 @@ test "profiles, connects, the vault: their lists" {
   // the bottom bar going out of the way, on its own springs and glides, to where it rests
   t3.run_for(bar.rest() - t3.time())
   t3.assert_idle()
+}
+
+///|
+test "an account on several stations shows its subscription tier" {
+  let t = settings_tester("profiles", shows="settings-profile-hosts")
+  t.tap_text("Claude 主账号")
+  t.run_for(@ui.move_most_ms)
+  assert_true(t.find("订阅账号 · Ultra") is Some(_))
 }
 
 ///|
