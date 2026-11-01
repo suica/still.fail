@@ -1,0 +1,46 @@
+name: agent sheet pictures
+on:
+  push:
+    branches: [ci/agent-sheet-pictures]
+    paths:
+      - apps/mbui/**
+      - .github/workflows/agent-sheet-pictures.yml
+permissions:
+  contents: read
+jobs:
+  pictures:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install MoonBit and browser
+        run: |
+          curl -fsSL --retry 3 https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk xvfb xauth
+          npm install --prefix apps/mbui/out/node playwright
+          apps/mbui/out/node/node_modules/.bin/playwright install --with-deps chromium
+      - name: Capture the changed and original app
+        working-directory: apps/mbui
+        run: |
+          mkdir -p "$RUNNER_TEMP/agent-sheet"
+          sed -i 's/deviceScaleFactor: 2/deviceScaleFactor: 2, hasTouch: true, isMobile: true/' mbui/scripts/web-shot.mjs
+          sed -i 's/await page.screenshot({ path: process.argv\[2\] });/await page.screenshot({ path: process.argv[2], clip: { x: 20, y: 610, width: 350, height: 220 } });/' mbui/scripts/web-shot.mjs
+          APP=sffix bash scripts/web.sh build
+          QUERY='MBUI_FIXTURE=chat-agent&MBUI_LOCALE=zh-CN&MBUI_DARK=1&MBUI_REDUCE_MOTION=1' xvfb-run -a node mbui/scripts/web-shot.mjs "$RUNNER_TEMP/agent-sheet/after.png" 100
+          git show a4c84560403716bd69b42ec363a4829d3cee22ea:apps/mbui/src/sfapp/sheets.mbt > src/sfapp/sheets.mbt
+          APP=sffix bash scripts/web.sh build
+          QUERY='MBUI_FIXTURE=chat-agent&MBUI_LOCALE=zh-CN&MBUI_DARK=1&MBUI_REDUCE_MOTION=1' xvfb-run -a node mbui/scripts/web-shot.mjs "$RUNNER_TEMP/agent-sheet/before.png" 100
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: agent-sheet-before-after
+          path: ${{ runner.temp }}/agent-sheet/
+          if-no-files-found: warn
