@@ -845,9 +845,9 @@ fn agent_row(
 }
 
 ///|
-/// Labels sit in one centered column, so both their centers and the values beside them line up.
+/// Labels sit in one left-aligned column, so the values beside them line up as well.
 fn agent_label(c : @ui.Ctx, label : String, width : Double) -> Unit {
-  c.box(w=Px(width), align=ACenter, fn() { c.text(label, style=agent_row_label) |> ignore }) |> ignore
+  c.box(w=Px(width), align=AStart, fn() { c.text(label, style=agent_row_label) |> ignore }) |> ignore
 }
 
 ///|

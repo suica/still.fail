@@ -5,14 +5,9 @@ on:
 permissions:
   contents: read
 jobs:
-  checks:
-    name: checks-${{ matrix.part }}
+  app-build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        part: [app, replay]
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -24,47 +19,55 @@ jobs:
           curl -fsSL --retry 3 https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
       - name: Check the app
-        if: matrix.part == 'app'
         run: bash apps/mbui/scripts/check.sh
-      - name: Test the app
-        env:
-          PARTS: ${{ matrix.part }}
-        run: TARGETS=native SFAPP_SHARDS=4 REPLAY_SHARDS=3 bash apps/mbui/scripts/test.sh
-      - name: Check screens
-        if: matrix.part == 'app'
+      - name: Build the app test program
+        run: TARGETS=native PARTS=app APP_GROUP=1/4 APP_BUILD_OUT="$RUNNER_TEMP/app-test" bash apps/mbui/scripts/test.sh
+      - name: Check the screens
         run: bash apps/mbui/scripts/screens.sh test
-  pictures:
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-test
+          path: ${{ runner.temp }}/app-test/
+  app:
+    name: app-${{ matrix.group }}
+    needs: app-build
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1/4, 2/4, 3/4, 4/4, contrast]
     steps:
       - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
         with:
-          fetch-depth: 0
+          name: app-test
+          path: ${{ runner.temp }}/app-test/
+      - name: Run the app tests
+        run: |
+          chmod +x "$RUNNER_TEMP/app-test/sfapp.whitebox_test.exe" "$RUNNER_TEMP/app-test/testexe"
+          TESTEXE="$RUNNER_TEMP/app-test/testexe" APP_EXE="$RUNNER_TEMP/app-test/sfapp.whitebox_test.exe" \
+            APP_INFO="$RUNNER_TEMP/app-test/__whitebox_test_info.json" TARGETS=native PARTS=app \
+            APP_GROUP=${{ matrix.group }} SFAPP_SHARDS=4 bash apps/mbui/scripts/test.sh
+  other:
+    name: other-${{ matrix.part }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { part: app, group: pkgs }
+          - { part: replay, group: '' }
+    steps:
+      - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
           node-version: '24'
           package-manager-cache: false
-      - name: Install MoonBit and browser
+      - name: Install MoonBit
         run: |
           curl -fsSL --retry 3 https://cli.moonbitlang.com/install/unix.sh | bash
           echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
-          sudo apt-get update -qq
-          sudo apt-get install -y fonts-noto-cjk xvfb xauth
-          npm install --prefix apps/mbui/out/node playwright
-          apps/mbui/out/node/node_modules/.bin/playwright install --with-deps chromium
-      - name: Capture the changed and original app
-        working-directory: apps/mbui
-        run: |
-          mkdir -p "$RUNNER_TEMP/agent-sheet"
-          sed -i 's/deviceScaleFactor: 2/deviceScaleFactor: 2, hasTouch: true, isMobile: true/' mbui/scripts/web-shot.mjs
-          APP=sffix bash scripts/web.sh build
-          QUERY='MBUI_FIXTURE=chat-agent&MBUI_LOCALE=zh-CN&MBUI_DARK=1' xvfb-run -a node mbui/scripts/web-shot.mjs "$RUNNER_TEMP/agent-sheet/after.png" 1000
-          git show a4c84560403716bd69b42ec363a4829d3cee22ea:apps/mbui/src/sfapp/sheets.mbt > src/sfapp/sheets.mbt
-          APP=sffix bash scripts/web.sh build
-          QUERY='MBUI_FIXTURE=chat-agent&MBUI_LOCALE=zh-CN&MBUI_DARK=1' xvfb-run -a node mbui/scripts/web-shot.mjs "$RUNNER_TEMP/agent-sheet/before.png" 1000
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: agent-sheet-pictures
-          path: ${{ runner.temp }}/agent-sheet/
-          if-no-files-found: warn
+      - name: Run the other tests
+        run: TARGETS=native PARTS=${{ matrix.part }} APP_GROUP=${{ matrix.group }} bash apps/mbui/scripts/test.sh
