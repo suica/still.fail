@@ -1,0 +1,21 @@
+name: Verify Codex sign-in state
+on:
+  push:
+    branches: [ci/codex-relogin-clear-20261102]
+permissions:
+  contents: read
+jobs:
+  station:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - run: cd station && pnpm install --frozen-lockfile
+      - run: cd station && pnpm check
+      - run: cd station && node --import ./test/setup-env.mjs --test --test-timeout=180000 test/accounts-quota.test.ts test/accounts-routes.test.ts
