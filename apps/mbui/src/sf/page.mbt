@@ -650,9 +650,9 @@ pub fn setting(c : @ui.Ctx, title : String, control : () -> Unit, note? : String
 let setting_in_card_control : @ui.Style = @ui.css("w=Full py=S2")
 
 ///|
-/// A wide setting's title, as strong as the titles of the page's other rows while keeping the input's text size.
+/// A wide setting's title, using the shared row-title weight at the input's text size.
 fn setting_title() -> @ui.TextStyle {
-  theme().rows.title.then(@ui.text_style(weight=Medium))
+  theme().rows.title.then(row_title_weight)
 }
 
 ///|
@@ -1142,8 +1142,8 @@ pub fn page_note(c : @ui.Ctx, words : String, bad? : Bool = false) -> Unit {
 /// every width: by its first line it stands in the row's corner, 10 from both its edges, its 14 round in the row's 18,
 /// which would want a corner of 24, on no step of the ladder (docs/ui-panels.md 圆角阶梯); a mark (an icon, a dot) is
 /// by its first line.
-/// `title_style` overrides a wide row's title (a setting's title follows the other settings' titles).
-/// `value_primary` makes the current value stand out over its label, for rows summarising a setting.
+/// `title_style` supplies a wide row's title size and other properties; its weight follows the shared row-title role.
+/// `value_emphasis` gives the current value more emphasis while keeping the title's own prominence.
 /// `title_after` after its title on its line (a pill: 你, 当前; a team's name), dropped before the title where
 /// the line has not the room for both; `control` at its
 /// end, last (a button, a switch, a choice: what is done here, no chevron), a button of words alone there with its
@@ -1178,7 +1178,7 @@ pub fn link_row(
   note_cut? : Bool = false,
   face? : Bool = false,
   title_style? : @ui.TextStyle,
-  value_primary? : Bool = false,
+  value_emphasis? : Bool = false,
   title_cut? : Bool = false,
   value_cut? : Bool = false,
 ) -> Bool {
@@ -1247,7 +1247,7 @@ pub fn link_row(
         }
         let said = fn() {
           let words = fn() {
-            let style = if value_primary { pg_value.then(row_primary_value) } else { pg_value }
+            let style = if value_emphasis { pg_value.then(row_emphasized_value) } else { pg_value }
             let style = if value_bad { style.then(bad) } else { style }
             c.text(value, style=if value_cut { style.then(cut_words) } else { style }, color?=if value_lit {
               Some(link_ink())
@@ -1271,7 +1271,6 @@ pub fn link_row(
           (true, false) => pg_row_title.then(row_strong)
           (false, false) => pg_row_title
         }
-        let titled = if value_primary { titled.then(row_secondary_label) } else { titled }
         // its end: what follows what it says, its chevron
         let end = fn() {
           match tail {
@@ -1322,7 +1321,6 @@ pub fn link_row(
                     // (what is after its title beside it, one piece: the line's ends are its title's and what it says)
                     let named = fn() {
                       let style = if strong { pg_row_title_in.then(row_strong) } else { pg_row_title_in }
-                      let style = if value_primary { style.then(row_secondary_label) } else { style }
                       c.text(title, style=if title_cut { style.then(cut_words) } else { style })
                       |> ignore
                       after()
@@ -1364,13 +1362,12 @@ pub fn link_row(
           None => ()
         }
         let title_words = fn() {
-          let title_style = title_style.unwrap_or(desk_list_title)
+          let title_style = title_style.unwrap_or(desk_list_title).then(row_title_weight)
           let style = match (strong, danger) {
             (_, true) => title_style.then(bad)
             (true, false) => title_style.then(row_strong)
             (false, false) => title_style
           }
-          let style = if value_primary { style.then(row_secondary_label) } else { style }
           if title_after is Some(_) {
             c.box(style=title_line, keep=true, fn() {
               c.text(title, style=style.then(cut_words), color?=ink, allow_ellipsis=title_cut) |> ignore
@@ -1385,7 +1382,7 @@ pub fn link_row(
         let end = fn() {
           if value != "" {
             let words = fn() {
-              let style = if value_primary { wide_value.then(row_primary_value) } else { wide_value }
+              let style = if value_emphasis { wide_value.then(row_emphasized_value) } else { wide_value }
               let style = if value_bad { style.then(bad) } else { style }
               c.text(value, style=if value_cut { style.then(cut_words) } else { style }, color?=if value_lit {
                 Some(th.p.accent_text)
@@ -1487,16 +1484,17 @@ pub fn at_row_end() -> Bool {
 }
 
 ///|
+/// A row's title, distinct from its note and value on every page width and input.
+let row_title_weight : @ui.TextStyle = @ui.text_style(weight=Medium)
+
+///|
 /// A row's title said strongly (`strong`: who or what a row is, the account's, the workspace's).
 // kept across runs: a value (no field of it changes)
 let row_strong : @ui.TextStyle = @ui.text_style(weight=Bold)
 
 ///|
-// A setting's summary: the current value is what one looks for; its label supplies the context.
-let row_primary_value : @ui.TextStyle = @ui.text_style(size=Body, weight=Semibold, color=Fg)
-
-///|
-let row_secondary_label : @ui.TextStyle = @ui.text_style(weight=Normal, color=Muted)
+// A setting's summary may also emphasise its current value.
+let row_emphasized_value : @ui.TextStyle = @ui.text_style(size=Body, weight=Semibold, color=Fg)
 
 ///|
 /// What a row says at its end with its dot before it, 6 apart, across its middle.
@@ -1799,7 +1797,8 @@ pub fn switch_row(
   strong? : Bool = false,
 ) -> Bool {
   let narrow_title = if strong { pg_switch_title.then(row_strong) } else { pg_switch_title }
-  let wide_title = if strong { theme().rows.title.then(row_strong) } else { theme().rows.title }
+  let wide_title_base = theme().rows.title.then(row_title_weight)
+  let wide_title = if strong { wide_title_base.then(row_strong) } else { wide_title_base }
   match look() {
     // (on a narrow page in the words of its narrow rows)
     Narrow if in_words.val > 0 && in_card.val == 0 =>
@@ -2432,12 +2431,12 @@ pub let pg_row_words : @ui.Style = @ui.style(w=grow)
 
 ///|
 // kept across runs: a value (no field of it changes)
-pub let pg_row_title : @ui.TextStyle = body.then(one_line).then(full_words)
+pub let pg_row_title : @ui.TextStyle = body.then(row_title_weight).then(one_line).then(full_words)
 
 ///|
 /// A row's title where what it says follows it in the line (narrow, over its note).
 // kept across runs: a value (no field of it changes)
-let pg_row_title_in : @ui.TextStyle = body.then(one_line)
+let pg_row_title_in : @ui.TextStyle = body.then(row_title_weight).then(one_line)
 
 ///|
 /// Its title and what it says, at the line's two ends (one under the other where the line has not the room), 12 apart.
@@ -2446,7 +2445,7 @@ let pg_title_value : @ui.Style = @ui.css("row w=Full gap=S3 justify=JBetween ali
 
 ///|
 // kept across runs: a value (no field of it changes)
-let pg_switch_title : @ui.TextStyle = body.then(full_words)
+let pg_switch_title : @ui.TextStyle = body.then(row_title_weight).then(full_words)
 
 ///|
 // kept across runs: a value (no field of it changes)
@@ -2673,7 +2672,7 @@ pub let desk_named : @ui.Style = @ui.css("row gap=S1_5 align=ACenter")
 
 ///|
 // kept across runs: a value (no field of it changes)
-pub let desk_list_title : @ui.TextStyle = @ui.text_style(size=Ui, leading=L6, weight=Medium, color=Fg, wrap=false)
+pub let desk_list_title : @ui.TextStyle = @ui.text_style(size=Ui, leading=L6, color=Fg, wrap=false).then(row_title_weight)
 
 ///|
 // kept across runs: a value (no field of it changes)
