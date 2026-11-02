@@ -1,0 +1,42 @@
+name: sidebar-stability-validation
+on:
+  push:
+    branches: [ci/sidebar-stability-checks-20261102]
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [check, replay]
+    env:
+      MBC_JOBS: 2
+      CSPLIT_JOBS: 1
+      REPLAY_SHARDS: 3
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit in the runner's temporary directory
+        shell: bash
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh -o "$RUNNER_TEMP/moon-install.sh"
+          sed -i 's@moonbit_dest=\$HOME/moonbit.tar.gz@moonbit_dest=$moon_home/moonbit.tar.gz@' "$RUNNER_TEMP/moon-install.sh"
+          SHELL=/bin/false bash "$RUNNER_TEMP/moon-install.sh"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: App checks and sidebar regression tests
+        if: matrix.part == 'check'
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash apps/mbui/scripts/check.sh
+          cd apps/mbui
+          . scripts/env.sh
+          moon_test_native src/sfapp/sidebar_float_moment_wbtest.mbt src/sfapp/wide_rail_wbtest.mbt src/sfapp/pane_moment_wbtest.mbt src/sfapp/window_zoom_wbtest.mbt
+          bash scripts/screens.sh test
+      - name: Replay tests with the repository's default three shards
+        if: matrix.part == 'replay'
+        shell: bash
+        run: PARTS=replay bash apps/mbui/scripts/test.sh
