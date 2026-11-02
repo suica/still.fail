@@ -1,0 +1,78 @@
+name: PR 3360 follow-up verification
+on:
+  push:
+    branches: [ci/pr3360-followup-20261102]
+permissions:
+  contents: read
+jobs:
+  regressions:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: Test navigation and archive
+        run: |
+          . apps/mbui/scripts/env.sh
+          cd "$A"
+          moon_test_native -p stillfail/sfapp --file chat_neighbour_wbtest.mbt
+          moon_test_native -p stillfail/sfapp --file wide_rail_wbtest.mbt
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - run: bash apps/mbui/scripts/check.sh
+  app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - run: PARTS=app SFAPP_SHARDS=4 bash apps/mbui/scripts/test.sh
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - run: PARTS=replay bash apps/mbui/scripts/test.sh
+  mac-screens:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - run: bash apps/mbui/scripts/screens.sh test
+      - run: APP=sffix bash apps/mbui/scripts/mac.sh build
