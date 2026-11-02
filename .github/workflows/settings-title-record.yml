@@ -1,0 +1,28 @@
+name: settings-title-text-record
+on:
+  push:
+    branches: [ci/settings-title-record-20261102]
+permissions:
+  contents: read
+jobs:
+  record:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit
+        env:
+          MOON_HOME: ${{ runner.temp }}/moon
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: Record macOS text for the changed screens
+        run: |
+          bash apps/mbui/scripts/screens.sh rec settings-home settings-home-dark settings-appearance settings-me settings-workspace settings-security settings-vault settings-vault-items settings-stations settings-station settings-profiles settings-profile settings-connects settings-memory settings-memory-doc settings-usage settings-archive settings-run-models settings-notify-off drive-roots chat-station-sheet
+      - uses: actions/upload-artifact@v4
+        with:
+          name: settings-title-text-record
+          path: apps/mbui/screens/text-mac.textrec
+          if-no-files-found: error
