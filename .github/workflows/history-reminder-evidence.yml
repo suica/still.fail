@@ -25,8 +25,15 @@ jobs:
       - run: bash apps/mbui/scripts/check.sh
   native-tests:
     if: ${{ !startsWith(github.event.head_commit.message, 'Pictures:') }}
+    name: native (${{ matrix.part }} ${{ matrix.group }})
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { part: app, group: pkgs }
+          - { part: replay, group: '' }
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -40,9 +47,55 @@ jobs:
           bash "$RUNNER_TEMP/moon-install.sh"
           echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
           echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
-      - name: App tests on native
-        run: SFAPP_SHARDS=4 bash apps/mbui/scripts/test.sh
+      - name: Package tests on native
+        run: TIMES=1 PARTS='${{ matrix.part }}' APP_GROUP='${{ matrix.group }}' SFAPP_SHARDS=4 bash apps/mbui/scripts/test.sh
+  native-app-build:
+    if: ${{ !startsWith(github.event.head_commit.message, 'Pictures:') }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+          package-manager-cache: false
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh -o "$RUNNER_TEMP/moon-install.sh"
+          bash "$RUNNER_TEMP/moon-install.sh"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: Build the app's test program
+        run: TIMES=1 PARTS=app APP_GROUP=1/4 APP_BUILD_OUT="$RUNNER_TEMP/app-test" SFAPP_SHARDS=4 bash apps/mbui/scripts/test.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: reminder-app-test
+          path: ${{ runner.temp }}/app-test
+  native-app:
+    if: ${{ !startsWith(github.event.head_commit.message, 'Pictures:') }}
+    needs: native-app-build
+    name: native (app ${{ matrix.group }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1/4, 2/4, 3/4, 4/4, contrast]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: reminder-app-test
+          path: ${{ runner.temp }}/app-test
+      - name: Run this app test group
+        run: |
+          chmod +x "$RUNNER_TEMP/app-test/sfapp.whitebox_test.exe" "$RUNNER_TEMP/app-test/testexe"
+          TESTEXE="$RUNNER_TEMP/app-test/testexe" APP_EXE="$RUNNER_TEMP/app-test/sfapp.whitebox_test.exe" \
+            APP_INFO="$RUNNER_TEMP/app-test/__whitebox_test_info.json" TIMES=1 PARTS=app \
+            APP_GROUP='${{ matrix.group }}' SFAPP_SHARDS=4 bash apps/mbui/scripts/test.sh
   screenshots:
+    if: ${{ !startsWith(github.event.head_commit.message, 'Native:') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
