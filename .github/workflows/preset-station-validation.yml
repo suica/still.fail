@@ -1,0 +1,22 @@
+name: preset-station-validation
+on:
+  push:
+    branches: [ci/preset-station-validation]
+permissions:
+  contents: read
+jobs:
+  station-regression:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install station dependencies
+        run: cd station && pnpm install --frozen-lockfile
+      - name: Check station candidate ownership
+        run: cd station && node --import ./test/setup-env.mjs --test --test-timeout=60000 --test-name-pattern='remote folders are not offered' test/presets.test.ts
