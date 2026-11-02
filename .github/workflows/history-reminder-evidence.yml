@@ -13,6 +13,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
+          package-manager-cache: false
       - name: Install MoonBit
         run: |
           export MOON_HOME="$RUNNER_TEMP/moon"
@@ -29,6 +30,7 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
+          package-manager-cache: false
       - name: Install MoonBit
         run: |
           export MOON_HOME="$RUNNER_TEMP/moon"
@@ -44,10 +46,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
         with:
-          fetch-depth: 3
+          fetch-depth: 20
       - uses: actions/setup-node@v5
         with:
           node-version-file: .node-version
+          package-manager-cache: false
       - name: Install MoonBit and Playwright
         run: |
           export MOON_HOME="$RUNNER_TEMP/moon"
@@ -60,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
           node .github/reminder-evidence/fixture.mjs
-          git show HEAD^^:apps/mbui/src/sfpages/history_steps.mbt > apps/mbui/src/sfpages/history_steps.mbt
+          git show b6915572d:apps/mbui/src/sfpages/history_steps.mbt > apps/mbui/src/sfpages/history_steps.mbt
           cd apps/mbui
           moon build --target js --release src/sffix
           mkdir -p out/web
