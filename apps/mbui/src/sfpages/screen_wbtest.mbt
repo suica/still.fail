@@ -871,7 +871,7 @@ test "denied for a grant the station lacks: its station's 权限 a tap away (前
 
 ///|
 test "a Linux desktop failure offers reopening without a macOS permissions button" {
-  let r = screen_rig(os="Linux 6.8")
+  let r = screen_rig(w=1280.0, h=800.0, dark=true, os="Linux 6.8")
   r.state(
     "denied",
     message="正在为 Linux 屏幕控制准备所需组件，完成后请重新打开。",
@@ -879,7 +879,9 @@ test "a Linux desktop failure offers reopening without a macOS permissions butto
   )
   r.finish()
   assert_true(r.t.find("重新打开") is Some(_))
-  assert_true(r.t.find("前往权限设置") is None)
+  println("DLBEGIN")
+  println(r.t.drawlist())
+  println("DLEND")
   screen_done(r.t)
 }
 

@@ -1,0 +1,64 @@
+name: Linux screen error page evidence
+on:
+  push:
+    branches: [ci/linux-screen-visual]
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.22.1'
+          package-manager-cache: false
+      - name: Linux renderer dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libgtk-4-dev libepoxy-dev libpango1.0-dev libcairo2-dev libfontconfig-dev libgdk-pixbuf-2.0-dev libsoup-3.0-dev zlib1g-dev libgl1-mesa-dri libegl-mesa0 fonts-noto-cjk fonts-noto-color-emoji fonts-dejavu-core
+      - name: Install MoonBit in the runner's temporary directory
+        shell: bash
+        run: |
+          set -eu
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          mkdir -p "$MOON_HOME/lib"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/binaries/latest/moonbit-linux-x86_64.tar.gz | tar -xz -C "$MOON_HOME"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/cores/core-latest.tar.gz | tar -xz -C "$MOON_HOME/lib"
+          ln -sf moon "$MOON_HOME/bin/moonx"
+          chmod +x "$MOON_HOME"/bin/* "$MOON_HOME"/bin/internal/tcc
+          export PATH="$MOON_HOME/bin:$PATH"
+          moon -C "$MOON_HOME/lib/core" bundle --warn-list -a --all
+          moon -C "$MOON_HOME/lib/core" bundle --warn-list -a --target wasm-gc --quiet
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: The app's denied screen before and after
+        shell: bash
+        run: |
+          set -euo pipefail
+          . apps/mbui/scripts/env.sh
+          cd apps/mbui
+          mkdir -p "$RUNNER_TEMP/evidence"
+          cp src/sfpages/screen_stage.mbt "$RUNNER_TEMP/screen_stage.after"
+          sed -i '/let os = screen_os(s.src, s.station).to_lower()/d; s/!os.has_prefix("linux") \&\& phase/phase/' src/sfpages/screen_stage.mbt
+          moon_test_native -p stillfail/sfpages --file screen_wbtest.mbt 2>&1 | tee "$RUNNER_TEMP/evidence/before.log" | awk '/^DLEND/{p=0} p{print} /^DLBEGIN/{p=1}' > "$RUNNER_TEMP/evidence/before.dl"
+          cp "$RUNNER_TEMP/screen_stage.after" src/sfpages/screen_stage.mbt
+          moon_test_native -p stillfail/sfpages --file screen_wbtest.mbt 2>&1 | tee "$RUNNER_TEMP/evidence/after.log" | awk '/^DLEND/{p=0} p{print} /^DLBEGIN/{p=1}' > "$RUNNER_TEMP/evidence/after.dl"
+          test -s "$RUNNER_TEMP/evidence/before.dl"
+          test -s "$RUNNER_TEMP/evidence/after.dl"
+      - name: Render the actual app draw lists offscreen
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd apps/mbui/mbui
+          APP=render bash scripts/linux.sh build
+          export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe
+          exe=out/linux/mod/_build/native/release/build/render/render.exe
+          MBUI_DL="$RUNNER_TEMP/evidence/before.dl" MBUI_DL_PNG="$RUNNER_TEMP/evidence/before.png" "$exe"
+          MBUI_DL="$RUNNER_TEMP/evidence/after.dl" MBUI_DL_PNG="$RUNNER_TEMP/evidence/after.png" "$exe"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-screen-error-page
+          path: ${{ runner.temp }}/evidence/
