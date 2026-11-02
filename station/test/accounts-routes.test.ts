@@ -368,6 +368,40 @@ describe("the accounts routes", { concurrency: true }, () => {
     await again.close();
   });
 
+  test("a revoked Codex login stays in the account check until the provider accepts it again", async () => {
+    const data = temp("codex-revoked");
+    const db = join(data, "stillfail.db");
+    writeFileSync(join(data, "config.json"), JSON.stringify({ profiles: [{ id: "cx", runtime: "codex", home: "homes/cx", access: { kind: "subscription" } }], connects: [] }));
+    let outcome: "ok" | "revoked" | "offline" = "ok";
+    const readQuota = async () => outcome === "ok"
+      ? { state: "ok", windows: [{ label: "5h", usedPercent: 12, resetsAt: null }], detail: null, checkedAt: 0 }
+      : { state: "unavailable", windows: [], detail: outcome, checkedAt: 0, ...(outcome === "revoked" ? { signedOut: true } : {}) };
+    const check = async () => ({ state: "ok", detail: "Logged in using ChatGPT", models: ["gpt-x"], checkedAt: 0 });
+    const first = await rig({ data, store: Store.open(db, null), readQuota, check });
+    await first.call("POST", "/profiles/cx/quota");
+    await first.call("POST", "/profiles/cx/check");
+    outcome = "revoked";
+    const quota = (await first.call("POST", "/profiles/cx/quota"))[1];
+    assert.equal(quota.state, "unavailable");
+    assert.equal(quota.signedOut, undefined, "the internal signal is not kept on quota");
+    assert.deepEqual([first.accounts.health("cx").check.state, first.accounts.health("cx").check.models], ["login", ["gpt-x"]]);
+    assert.equal((await first.call("POST", "/profiles/cx/check"))[1].state, "login", "the CLI's local status is insufficient");
+    await first.close();
+    first.store.close();
+
+    const again = await rig({ data, store: Store.open(db, null), readQuota, check });
+    assert.equal((await again.call("POST", "/profiles/cx/check"))[1].state, "login", "the refusal survives a station restart");
+    outcome = "offline";
+    await again.call("POST", "/profiles/cx/quota");
+    assert.equal(again.accounts.health("cx").check.state, "login", "a network failure does not clear the refusal");
+    outcome = "ok";
+    await again.call("POST", "/profiles/cx/quota");
+    assert.equal(again.accounts.health("cx").check.state, "ok");
+    assert.equal(again.accounts.health("cx").check.codexRevoked, undefined);
+    await again.close();
+    again.store.close();
+  });
+
   test("a profile on the machine's own login: made from a login kept in a file, its models chosen, never renamed or signed in, stopped", async () => {
     const m = fakeMachine({ claude: `echo '{"loggedIn": true, "email": "b@x.com", "subscriptionType": "pro"}'`, codex: "echo 'Logged in using ChatGPT'" });
     const { mkdirSync } = await import("node:fs");

@@ -883,6 +883,18 @@ export class Accounts {
     this.changed();
   }
 
+  /// A Codex provider refusal outlives `codex login status`, which only sees that a local token exists. A successful
+  /// provider allowance read clears it. Keep the last known models and capabilities for the account pool.
+  private codexLogin(id: string, revoked: boolean, lang: Lang = stationLang()) {
+    const before = this.checks.get(id);
+    if (revoked) {
+      this.keepCheck(id, { ...(before ?? { models: null, checkedAt: 0 }), state: "login", detail: tr(lang, "station.quota.codexLogin"), codexRevoked: true });
+    } else if (before?.codexRevoked) {
+      const { codexRevoked: _, ...kept } = before;
+      this.keepCheck(id, { ...kept, state: "ok", detail: tr(lang, "station.profile.signedIn") });
+    }
+  }
+
   /// POST /profiles/:id/check: asks the provider or runtime whether the profile works, its models, its reasoning levels
   /// (Codex) and what it can decide with.
   async check(id: string, lang: Lang = stationLang()): Promise<ProfileCheck> {
@@ -940,6 +952,12 @@ export class Accounts {
     if (profile.machine === true && kind === "subscription" && check.state === "ok") {
       const login = this.machineLogins().find((l) => l.runtime === profile.runtime && l.loggedIn);
       if (typeof login?.plan === "string" && login.plan.trim() !== "") check.plan = login.plan.trim();
+    }
+    const previous = this.checks.get(id);
+    if (codexSubscription && previous?.codexRevoked) {
+      check.state = "login";
+      check.detail = previous.detail;
+      check.codexRevoked = true;
     }
     this.keepCheck(id, check);
     // One never asked yet (just made, however): its allowance now, not at the next round.
@@ -1017,7 +1035,10 @@ export class Accounts {
     this.deps.store.setProfileQuota(id, read);
     this.changed();
     // Its login found over: its check says so, and the pool passes it over (as a Console or Kimi sign-in refused).
-    if (signedOut && this.checks.get(id)?.state !== "login") this.background.spawn(() => this.check(id).catch(() => undefined));
+    if (profile.runtime === "codex" && accessKind(profile) === "subscription") {
+      if (signedOut) this.codexLogin(id, true);
+      else if (read.state === "ok") this.codexLogin(id, false);
+    } else if (signedOut && this.checks.get(id)?.state !== "login") this.background.spawn(() => this.check(id).catch(() => undefined));
     return read;
   }
 
