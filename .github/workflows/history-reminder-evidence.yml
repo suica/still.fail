@@ -1,0 +1,84 @@
+name: History reminder evidence
+on:
+  push:
+    branches: [ci/history-reminder-evidence-20261102]
+permissions:
+  contents: read
+jobs:
+  native-check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh -o "$RUNNER_TEMP/moon-install.sh"
+          bash "$RUNNER_TEMP/moon-install.sh"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - run: bash apps/mbui/scripts/check.sh
+  native-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh -o "$RUNNER_TEMP/moon-install.sh"
+          bash "$RUNNER_TEMP/moon-install.sh"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: App tests on native
+        run: SFAPP_SHARDS=4 bash apps/mbui/scripts/test.sh
+  screenshots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 3
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .node-version
+      - name: Install MoonBit and Playwright
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh -o "$RUNNER_TEMP/moon-install.sh"
+          bash "$RUNNER_TEMP/moon-install.sh"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          npm install --prefix .github/reminder-evidence --no-audit --no-fund playwright-core@1.63.0
+      - name: Capture before and after from the app's web host
+        run: |
+          set -euo pipefail
+          node .github/reminder-evidence/fixture.mjs
+          git show HEAD^^:apps/mbui/src/sfpages/history_steps.mbt > apps/mbui/src/sfpages/history_steps.mbt
+          cd apps/mbui
+          moon build --target js --release src/sffix
+          mkdir -p out/web
+          cp _build/js/release/build/stillfail/sffix/sffix.js out/web/demo.js
+          cp mbui/web/index.html mbui/web/host.js out/web/
+          cd ../..
+          node .github/reminder-evidence/capture.mjs before.png
+          git show HEAD:apps/mbui/src/sfpages/history_steps.mbt > apps/mbui/src/sfpages/history_steps.mbt
+          cd apps/mbui
+          moon build --target js --release src/sffix
+          cp _build/js/release/build/stillfail/sffix/sffix.js out/web/demo.js
+          cd ../..
+          node .github/reminder-evidence/capture.mjs after.png
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: history-reminder-pictures
+          path: |
+            before.png
+            after.png
+          if-no-files-found: warn
