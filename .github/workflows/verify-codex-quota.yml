@@ -1,0 +1,49 @@
+name: Verify Codex allowance app groups
+on:
+  push:
+    branches: [codex/friendly-usage-ci-run]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: Build the app test program
+        run: TIMES=1 MBC_REAL_CC=clang MBC_JOBS=2 MBC_LOG="$RUNNER_TEMP/mbc.log" TARGETS=native PARTS=app APP_GROUP=1/4 APP_BUILD_OUT="$RUNNER_TEMP/app-test" bash apps/mbui/scripts/test.sh
+      - name: Native build diagnostics
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/mbc.log" ]; then tail -60 "$RUNNER_TEMP/mbc.log"; fi
+          free -h
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-test-program
+          path: ${{ runner.temp }}/app-test
+          retention-days: 1
+          compression-level: 1
+  app:
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1/4, 2/4, 3/4, 4/4, contrast]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-test-program
+          path: ${{ runner.temp }}/app-test
+      - name: Run app tests by repository CI group
+        run: |
+          chmod +x "$RUNNER_TEMP/app-test/sfapp.whitebox_test.exe" "$RUNNER_TEMP/app-test/testexe"
+          TESTEXE="$RUNNER_TEMP/app-test/testexe" APP_EXE="$RUNNER_TEMP/app-test/sfapp.whitebox_test.exe" APP_INFO="$RUNNER_TEMP/app-test/__whitebox_test_info.json" TIMES=1 TARGETS=native PARTS=app APP_GROUP="${{ matrix.group }}" SFAPP_SHARDS=4 LINES_OUT=40 bash apps/mbui/scripts/test.sh
