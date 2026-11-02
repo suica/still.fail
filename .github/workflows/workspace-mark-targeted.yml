@@ -1,0 +1,30 @@
+name: workspace-mark-targeted
+on:
+  push:
+    branches: [ci/workspace-mark-targeted-20261102]
+permissions:
+  contents: read
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit
+        env:
+          MOON_HOME: ${{ runner.temp }}/moon
+        run: curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+      - name: Check workspace rows
+        run: |
+          set -euo pipefail
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export MBUI_TOOLS="$RUNNER_TEMP/tools"
+          mkdir -p "$MBUI_TOOLS"
+          ln -s "$MOON_HOME" "$MBUI_TOOLS/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          export MBC_JOBS=2 CSPLIT_JOBS=2
+          cd apps/mbui
+          . scripts/env.sh
+          native_tests "$PWD"
+          moon test $NATIVE -p stillfail/sfpages --file notifications_wbtest.mbt
+          moon test $NATIVE -p stillfail/sfpages --file station_page_wbtest.mbt
