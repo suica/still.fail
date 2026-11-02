@@ -28,6 +28,7 @@ try {
   })).jsonValue();
   if (!result?.frame || result.fail) throw new Error(`app did not draw: ${JSON.stringify(result)}`);
   await page.screenshot({ path: process.argv[2] });
+  await page.screenshot({ path: process.argv[2].replace('.png', '-detail.png'), clip: { x: 8, y: 540, width: 480, height: 150 } });
 } finally {
   await browser.close();
   server.close();

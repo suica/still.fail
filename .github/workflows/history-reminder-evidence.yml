@@ -61,6 +61,8 @@ jobs:
           echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
           echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
           npm install --prefix .github/reminder-evidence --no-audit --no-fund playwright-core@1.63.0
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-noto-cjk
       - name: Capture before and after from the app's web host
         run: |
           set -euo pipefail
@@ -86,5 +88,7 @@ jobs:
           path: |
             before.png
             after.png
+            before-detail.png
+            after-detail.png
             diagnostic.png
           if-no-files-found: warn
