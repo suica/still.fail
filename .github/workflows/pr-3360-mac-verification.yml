@@ -1,0 +1,21 @@
+name: PR 3360 Mac verification
+on:
+  push:
+    branches: [ci/pr3360-mac-20261102]
+permissions:
+  contents: read
+jobs:
+  mac-screens:
+    runs-on: macos-26
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - run: bash apps/mbui/scripts/screens.sh test
+      - run: APP=sffix bash apps/mbui/scripts/mac.sh build
