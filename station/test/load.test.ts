@@ -3,8 +3,9 @@
 // measurements and a clock of the test's.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CPU_EVERY_MS, CPU_SPAN_MS, CpuWindow } from "../src/api/host.ts";
-import { Gpus, type Run, appleGpu, nvidiaGpus } from "../src/jobs/gpu.ts";
+import { CPU_EVERY_MS, CPU_SPAN_MS, CpuWindow, Host } from "../src/api/host.ts";
+import type { Readers } from "../src/read/pool.ts";
+import { Gpus, type Run, appleGpu, nvidiaGpus, windowsAmdGpus } from "../src/jobs/gpu.ts";
 import { Net, OLDER, detailed, measure, summary } from "../src/jobs/load.ts";
 
 test("the CPUs' recent business is an average over about the last minute, not the moment's", () => {
@@ -35,8 +36,9 @@ test("the CPUs' recent business is an average over about the last minute, not th
 });
 
 test("GPUs: Apple's chip and cores once, NVIDIA's as nvidia-smi says them, kept ten seconds; none where there are none", async () => {
-  const ioreg = `+-o AGXAcceleratorG14X  <class AGXAcceleratorG14X>\n    {\n      "model" = "Apple M2 Max"\n      "gpu-core-count" = 30\n    }\n`;
-  assert.deepEqual(appleGpu(ioreg), { name: "Apple M2 Max", cores: 30 });
+  const ioreg = `+-o AGXAcceleratorG14X  <class AGXAcceleratorG14X>\n    {\n      "model" = "Apple M2 Max"\n      "gpu-core-count" = 30\n      "PerformanceStatistics" = {"Device Utilization %"=21}\n    }\n`;
+  assert.deepEqual(appleGpu(ioreg), { name: "Apple M2 Max", cores: 30, busy: 0.21 });
+  assert.deepEqual(appleGpu('"model" = "Apple M2"\n"Device Utilization %"=101'), { name: "Apple M2" });
   assert.equal(appleGpu("nothing"), null);
   assert.deepEqual(nvidiaGpus("NVIDIA GeForce RTX 4090, 24564, 1024, 37\nTesla T4, 15360, [N/A], [N/A]\n"), [
     { name: "NVIDIA GeForce RTX 4090", memoryTotalBytes: 24564 * 1024 * 1024, memoryUsedBytes: 1024 * 1024 * 1024, busy: 0.37 },
@@ -45,25 +47,29 @@ test("GPUs: Apple's chip and cores once, NVIDIA's as nvidia-smi says them, kept 
 
   let now = 0;
   const asked: string[] = [];
+  let apple = ioreg;
   let smi = "NVIDIA A10, 23028, 0, 0";
   let answer: (() => void) | null = null;
   const run: Run = async (file) => {
     asked.push(file);
-    if (file === "ioreg") return ioreg;
+    if (file === "ioreg") return apple;
     if (asked.filter((f) => f === "nvidia-smi").length === 3) await new Promise<void>((r) => (answer = r));
     return smi;
   };
   const mac = new Gpus({ run, os: "macos", arch: "arm64", now: () => now });
-  assert.deepEqual(await mac.read(), [{ name: "Apple M2 Max", cores: 30 }, { name: "NVIDIA A10", memoryTotalBytes: 23028 * 1024 * 1024, memoryUsedBytes: 0, busy: 0 }]);
+  assert.deepEqual(await mac.read(), [{ name: "Apple M2 Max", cores: 30, busy: 0.21 }, { name: "NVIDIA A10", memoryTotalBytes: 23028 * 1024 * 1024, memoryUsedBytes: 0, busy: 0 }]);
   now = 9_999;
   smi = "NVIDIA A10, 23028, 1024, 50";
   await mac.read();
-  assert.deepEqual(asked, ["ioreg", "nvidia-smi"], "ioreg once; nvidia-smi's answer kept ten seconds");
+  assert.deepEqual(asked, ["ioreg", "nvidia-smi"], "both answers are kept ten seconds");
   // Ten seconds old: given once more while it is asked again, the new answer after.
+  apple = ioreg.replace('"Device Utilization %"=21', '"Device Utilization %"=54');
   now = 10_000;
   assert.equal((await mac.read())![1]!.busy, 0);
   await new Promise((r) => setImmediate(r));
+  assert.equal((await mac.read())![0]!.busy, 0.54);
   assert.equal((await mac.read())![1]!.busy, 0.5);
+  assert.equal(asked.filter((f) => f === "ioreg").length, 2, "Apple utilization is sampled again");
   // A slow answer: the last one is given meanwhile, not waited for, and asked for once.
   now = 20_000;
   smi = "NVIDIA A10, 23028, 2048, 90";
@@ -76,14 +82,46 @@ test("GPUs: Apple's chip and cores once, NVIDIA's as nvidia-smi says them, kept 
 
   // No nvidia-smi: asked once, never again; on Linux without one, none at all.
   const linuxAsked: string[] = [];
-  const linux = new Gpus({ run: async (file) => (linuxAsked.push(file), undefined), os: "linux", arch: "x64", now: () => now });
+  const linux = new Gpus({ run: async (file) => (linuxAsked.push(file), undefined), os: "linux", arch: "x64", now: () => now, linux: async () => [] });
   assert.equal(await linux.read(), null);
   now = 60_000;
   assert.equal(await linux.read(), null);
   assert.deepEqual(linuxAsked, ["nvidia-smi"]);
   // One that fails or does not answer in time is none, asked again later.
-  const failing = new Gpus({ run: async () => null, os: "linux", arch: "x64", now: () => now });
+  const failing = new Gpus({ run: async () => null, os: "linux", arch: "x64", now: () => now, linux: async () => [] });
   assert.equal(await failing.read(), null);
+});
+
+test("host samples include fresh GPU readings even while the rest of the host sample is cached", async () => {
+  let reads = 0;
+  let gpu = [{ name: "NVIDIA A10", busy: 0.25 }];
+  const readers = { read: async () => {
+    reads++;
+    return JSON.stringify({ info: { checkedAt: Number.MAX_SAFE_INTEGER, cpus: 4 }, seen: null });
+  } } as unknown as Readers;
+  const host = new Host(readers, { read: async () => gpu });
+  assert.deepEqual((await host.sample()).gpus, [{ name: "NVIDIA A10", busy: 0.25 }]);
+  gpu = [{ name: "NVIDIA A10", busy: 0.8 }];
+  assert.deepEqual((await host.sample()).gpus, [{ name: "NVIDIA A10", busy: 0.8 }]);
+  assert.equal(reads, 1);
+  const unavailable = new Host(readers, { read: async () => { throw new Error("GPU unavailable"); } });
+  assert.deepEqual(await unavailable.sample(), { checkedAt: Number.MAX_SAFE_INTEGER, cpus: 4, gpus: null });
+});
+
+test("Windows identifies each AMD controller along with NVIDIA's readings", async () => {
+  assert.deepEqual(windowsAmdGpus('"AMD Radeon RX 7900"'), [{ name: "AMD Radeon RX 7900" }]);
+  assert.deepEqual(windowsAmdGpus('["AMD Radeon RX 7900","AMD Radeon Pro"]'), [{ name: "AMD Radeon RX 7900" }, { name: "AMD Radeon Pro" }]);
+  assert.deepEqual(windowsAmdGpus(""), []);
+  const asked: string[] = [];
+  const gpus = new Gpus({ os: "windows", run: async (file) => {
+    asked.push(file);
+    return file === "powershell.exe" ? '"AMD Radeon RX 7900"' : "NVIDIA RTX 4090, 24576, 1024, 20";
+  } });
+  assert.deepEqual(await gpus.read(), [
+    { name: "NVIDIA RTX 4090", memoryTotalBytes: 24 * 1024 ** 3, memoryUsedBytes: 1024 ** 3, busy: 0.2 },
+    { name: "AMD Radeon RX 7900" },
+  ]);
+  assert.deepEqual(asked.sort(), ["nvidia-smi", "powershell.exe"]);
 });
 
 test("measured from the host page's sample, and said in one line; what a station leaves out is left out", async () => {
