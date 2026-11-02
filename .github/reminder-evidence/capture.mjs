@@ -11,7 +11,11 @@ const server = http.createServer(async (req, res) => {
   catch { file = path.join(root, 'index.html'); }
   try {
     res.writeHead(200, { 'content-type': file.endsWith('.js') ? 'text/javascript' : 'text/html' });
-    res.end(await readFile(file));
+    const body = await readFile(file);
+    // Expose the capture clock and any host wait for diagnosing a frame that never reports completion.
+    res.end(file.endsWith('/host.js')
+      ? body.toString().replace('    frames++;', '    frames++; window.__frameData = { frame: frames, t, awaiting, why };')
+      : body);
   } catch { res.writeHead(404); res.end(); }
 });
 await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -22,7 +26,7 @@ try {
   const query = new URLSearchParams({ bench: '-1', shot_at: '500', MBUI_PLATFORM: 'mac', MBUI_FIXTURE: 'history', MBUI_LOCALE: 'zh-CN' });
   await page.goto(`http://127.0.0.1:${server.address().port}/?${query}`);
   const result = await (await page.waitForFunction(() => window.__shot || window.__done !== undefined, null, { timeout: 60000 }).catch(async (error) => {
-    console.error('app logs:', JSON.stringify(await page.evaluate(() => window.__logs?.slice(-30))));
+    console.error('app state:', JSON.stringify(await page.evaluate(() => ({ logs: window.__logs?.slice(-30), frame: window.__frameData }))));
     await page.screenshot({ path: 'diagnostic.png' });
     throw error;
   })).jsonValue();
