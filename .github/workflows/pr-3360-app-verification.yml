@@ -1,0 +1,68 @@
+name: PR 3360 app verification
+on:
+  push:
+    branches: [ci/pr3360-app-20261102]
+permissions:
+  contents: read
+jobs:
+  app-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: Build the app test program
+        run: |
+          TIMES=1 MBC_REAL_CC=clang TARGETS=native PARTS=app APP_GROUP=1/4 \
+          APP_BUILD_OUT="$RUNNER_TEMP/app-test" SFAPP_SHARDS=4 LINES_OUT=40 \
+            bash apps/mbui/scripts/test.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: app-test
+          path: ${{ runner.temp }}/app-test
+          retention-days: 1
+          compression-level: 1
+  app:
+    needs: app-build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1/4, 2/4, 3/4, 4/4, contrast]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-test
+          path: ${{ runner.temp }}/app-test
+      - name: Test app group
+        run: |
+          chmod +x "$RUNNER_TEMP/app-test/sfapp.whitebox_test.exe" "$RUNNER_TEMP/app-test/testexe"
+          TESTEXE="$RUNNER_TEMP/app-test/testexe" \
+          APP_EXE="$RUNNER_TEMP/app-test/sfapp.whitebox_test.exe" \
+          APP_INFO="$RUNNER_TEMP/app-test/__whitebox_test_info.json" \
+          TIMES=1 TARGETS=native PARTS=app APP_GROUP=${{ matrix.group }} SFAPP_SHARDS=4 LINES_OUT=40 \
+            bash apps/mbui/scripts/test.sh
+  app-packages:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: Test app packages
+        run: |
+          TIMES=1 MBC_REAL_CC=clang TARGETS=native PARTS=app APP_GROUP=pkgs LINES_OUT=40 \
+            bash apps/mbui/scripts/test.sh
