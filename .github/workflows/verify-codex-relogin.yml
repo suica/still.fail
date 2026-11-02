@@ -1,0 +1,26 @@
+name: Verify Codex login recovery
+on:
+  push:
+    branches: [ci/codex-relogin-review-20261102]
+permissions:
+  contents: read
+jobs:
+  station:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install station dependencies
+        run: cd station && pnpm install --frozen-lockfile
+      - name: Check station types
+        run: cd station && pnpm check
+      - name: Test login, sharing, account selection and Codex sessions
+        run: |
+          cd station
+          node ../scripts/native.ts run mesh runner -- node --import ./test/setup-env.mjs --test --test-concurrency=2 --test-timeout=600000 test/accounts-quota.test.ts test/accounts-routes.test.ts test/codex.test.ts test/hub.test.ts test/hub-parts.test.ts test/pool-shared-account.test.ts test/share.test.ts
