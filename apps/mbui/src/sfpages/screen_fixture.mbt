@@ -216,6 +216,12 @@ pub fn screen_fixture_stream(
     }
     "screen-outdated" => over("outdated", "这台 station 的版本还不能共享屏幕，更新后再试", None)
     "screen-gone" => over("gone", "这个标签页已经关了", None)
+    "screen-denied-linux" =>
+      over("denied", "正在为 Linux 屏幕控制准备所需组件，完成后请重新打开。", Some({
+        "capture": false,
+        "control": false,
+        "message": "正在为 Linux 屏幕控制准备所需组件，完成后请重新打开。",
+      }))
     "screen-denied" =>
       over(
         "denied",

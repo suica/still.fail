@@ -662,6 +662,7 @@ fn fixture_answer(f : Fixture, name : String, params : Map[String, Json], versio
   // `stationNet` view of its own (the made-up stations say both as `net`)
   let value = match name {
     // (files-reading: the stations with a drive not read yet, the files' sidebar waiting on them)
+    "stations" if f.mode == "screen-denied-linux" => Some(Json::array([Json::object({ "station": Json::string("ws-1/st-1"), "host": Json::object({ "os": Json::string("Linux 6.8") }) })]))
     "stations" if params.get("drive") is Some(True) && f.mode == "files-reading" => None
     "stations" if params.get("drive") is Some(True) =>
       fix_browse_with_drive(f, fixture_stations_way(value), text(Some(Json::object(params)), "here"))

@@ -1,0 +1,54 @@
+name: Linux screen actual app evidence
+on:
+  push:
+    branches: [ci/linux-screen-visual-app]
+permissions:
+  contents: read
+jobs:
+  evidence:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: '24.22.1', package-manager-cache: false }
+      - name: Linux app dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb xauth libgtk-4-dev libepoxy-dev libpango1.0-dev libcairo2-dev libfontconfig-dev libgdk-pixbuf-2.0-dev libsoup-3.0-dev zlib1g-dev libgl1-mesa-dri libegl-mesa0 fonts-noto-cjk fonts-noto-color-emoji fonts-dejavu-core
+      - name: Install MoonBit in the runner's temporary directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          mkdir -p "$MOON_HOME/lib"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/binaries/latest/moonbit-linux-x86_64.tar.gz | tar -xz -C "$MOON_HOME"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/cores/core-latest.tar.gz | tar -xz -C "$MOON_HOME/lib"
+          ln -sf moon "$MOON_HOME/bin/moonx"
+          chmod +x "$MOON_HOME"/bin/* "$MOON_HOME"/bin/internal/tcc
+          export PATH="$MOON_HOME/bin:$PATH"
+          moon -C "$MOON_HOME/lib/core" bundle --warn-list -a --all
+          moon -C "$MOON_HOME/lib/core" bundle --warn-list -a --target wasm-gc --quiet
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: Capture the real app with a Linux station fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence"
+          export LIBGL_ALWAYS_SOFTWARE=1 GALLIUM_DRIVER=llvmpipe GDK_BACKEND=x11
+          export MBUI_FIXTURE=screen-denied-linux MBUI_SCRIPT=shot MBUI_SHOT_DIR="$RUNNER_TEMP/evidence" MBUI_WIN=1280x800 MBUI_DARK=1 MBUI_BENCH=-1
+          APP=sffix bash apps/mbui/scripts/linux.sh build
+          exe=$(find apps/mbui/mbui/out/linux/app/_build/native/release/build -name sffix.exe -type f | head -1)
+          test -n "$exe"
+          MBUI_SHOT_NAME=after xvfb-run -a -s '-screen 0 1440x900x24' "$exe"
+          sed -i '/let os = screen_os(s.src, s.station).to_lower()/d; s/!os.has_prefix("linux") \&\& phase/phase/' apps/mbui/src/sfpages/screen_stage.mbt
+          APP=sffix bash apps/mbui/scripts/linux.sh build
+          MBUI_SHOT_NAME=before xvfb-run -a -s '-screen 0 1440x900x24' "$exe"
+          test -s "$RUNNER_TEMP/evidence/before.png"
+          test -s "$RUNNER_TEMP/evidence/after.png"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-screen-actual-app
+          path: ${{ runner.temp }}/evidence/
