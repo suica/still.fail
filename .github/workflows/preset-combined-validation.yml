@@ -1,0 +1,26 @@
+name: preset-combined-validation
+on:
+  push:
+    branches: [ci/preset-combined-validation]
+permissions:
+  contents: read
+jobs:
+  combined-presets:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install MoonBit
+        env:
+          MOON_HOME: ${{ runner.temp }}/moon
+        run: |
+          set -euo pipefail
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: Exercise both changes together
+        env:
+          MOON_HOME: ${{ runner.temp }}/moon
+        run: cd apps/mbui && moon test --target js -j 1 -p stillfail/sfapp --file presets_wbtest.mbt
