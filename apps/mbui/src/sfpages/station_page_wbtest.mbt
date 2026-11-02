@@ -44,6 +44,19 @@ test "a station's page, its parts chosen by its choice: 设置 pressed shows it"
 }
 
 ///|
+test "the station's GPUs are each visible on narrow and wide pages with either input" {
+  for (w, platform) in page_cases {
+    let t = setting_tester(Station("ws1/st1"), w, platform~, mode="settings-station-gpu", h=2400.0)
+    t.run_for(@ui.move_most_ms)
+    assert_eq(t.squeeze_faults(), [])
+    assert_true(t.find("GPU 1 · NVIDIA GeForce RTX 4090") is Some(_))
+    assert_true(t.find("利用率 37% · 显存 4.0 GB / 24.0 GB") is Some(_))
+    assert_true(t.find("GPU 2 · NVIDIA GeForce RTX 4090") is Some(_))
+    assert_true(t.find("利用率 0% · 显存 1.0 GB / 24.0 GB") is Some(_))
+  }
+}
+
+///|
 test "a station's 设置 switches going on afresh once a session's cache is over" {
   let asked : Array[Json] = []
   let t = setting_tester(

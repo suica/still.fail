@@ -616,6 +616,25 @@ test("a_meter_is_drawn_as_an_allowance_to_what_is_left", () => {
   assert.equal(h.meters[1].remaining, "剩 0.0 G");
 });
 
+test("a station's GPUs are shown separately with only measurements that are known", () => {
+  const one = p.host({ gpus: [{ name: "Apple M2 Max", cores: 30 }] });
+  assert.deepEqual(one.gpus, [{ heading: "GPU · Apple M2 Max", detail: "30 核" }]);
+  const several = p.host({ gpus: [
+    { name: "NVIDIA RTX 4090", busy: 0.37, memoryUsedBytes: 4 * GIB, memoryTotalBytes: 24 * GIB },
+    { name: "Tesla T4", busy: 0, memoryTotalBytes: 16 * GIB },
+    { name: "GPU without metrics" },
+  ] });
+  assert.deepEqual(several.gpus, [
+    { heading: "GPU 1 · NVIDIA RTX 4090", detail: "利用率 37% · 显存 4.0 GB / 24.0 GB" },
+    { heading: "GPU 2 · Tesla T4", detail: "利用率 0% · 显存 16.0 GB" },
+    { heading: "GPU 3 · GPU without metrics", detail: "" },
+  ]);
+  assert.deepEqual(p.host({}).gpus, [], "older stations do not say GPUs");
+  assert.deepEqual(p.host({ gpus: null }).gpus, [], "none detected");
+  assert.deepEqual(p.host({ gpus: [{ name: "GPU", busy: -1, memoryUsedBytes: 2 * GIB }] }).gpus,
+    [{ heading: "GPU", detail: "显存已用 2.0 GB" }]);
+});
+
 test("loss_is_counted_on_the_way_in_use_and_not_across_a_change_of_it", () => {
   const way = (path: string, sent: number, lost: number) => ({ path, sent, lost });
   assert.deepEqual(packetsSince(way("1", 100, 2), way("1", 160, 3)), { sent: 60, lost: 1 });

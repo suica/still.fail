@@ -945,6 +945,22 @@ export function host(h: J): J {
   const disk = meter(t("core-views.present.host.disk"), t("core-views.present.host.disk_short"), diskTotal > 0 ? ((diskTotal - diskFree) / diskTotal) * 100 : 0, t("core-views.present.host.disk_value", { free: format.gb1(diskFree), total: format.gb1(diskTotal) }), null, {
     remaining: remaining(diskFree), big: big(diskFree), unit: "GB", title: t("core-views.present.host.disk_left"), total: t("core-views.present.host.out_of", { size: format.gb(diskTotal) }),
   });
+  // Each GPU keeps its own measurements: cards may differ, and a missing measurement is not zero.
+  const gpus = (arr(src.gpus) ?? []).filter(isObject);
+  o.gpus = gpus.map((gpu: J, i: number) => {
+    const label = gpus.length === 1 ? "GPU" : `GPU ${i + 1}`;
+    const name = str(gpu.name)?.trim() || "GPU";
+    const parts: string[] = [];
+    if (typeof gpu.busy === "number" && Number.isFinite(gpu.busy) && gpu.busy >= 0 && gpu.busy <= 1)
+      parts.push(t("core-views.present.host.gpu_busy", { percent: format.round(gpu.busy * 100) }));
+    const total = typeof gpu.memoryTotalBytes === "number" && Number.isFinite(gpu.memoryTotalBytes) && gpu.memoryTotalBytes > 0 ? gpu.memoryTotalBytes : null;
+    const used = typeof gpu.memoryUsedBytes === "number" && Number.isFinite(gpu.memoryUsedBytes) && gpu.memoryUsedBytes >= 0 ? gpu.memoryUsedBytes : null;
+    if (used !== null && total !== null) parts.push(t("core-views.present.host.gpu_memory", { used: format.gb1(used), total: format.gb1(total) }));
+    else if (used !== null) parts.push(t("core-views.present.host.gpu_memory_used", { used: format.gb1(used) }));
+    else if (total !== null) parts.push(t("core-views.present.host.gpu_memory_total", { total: format.gb1(total) }));
+    if (typeof gpu.cores === "number" && Number.isFinite(gpu.cores) && gpu.cores > 0) parts.push(t("core-views.present.host.cores", { n: gpu.cores }));
+    return { heading: name === "GPU" ? label : `${label} · ${name}`, detail: parts.join(" · ") };
+  });
   // What the machine is, the same line wherever it is named: its chip, its memory, its system.
   o.identity = [cpuModel, memTotal > 0 ? format.gb(memTotal) : null, os || null].filter((x) => x !== null).join(" · ");
   // The rest, a row each, only where the machine is looked at closely.

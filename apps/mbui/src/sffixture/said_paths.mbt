@@ -677,6 +677,7 @@ pub let said_paths : Map[String, Array[String]] = {
   "host": [
     "summary",
     "line",
+    "gpus.*.heading",
     "details.*.value",
   ],
   "imageNear": [
@@ -872,6 +873,7 @@ pub let said_paths : Map[String, Array[String]] = {
     "stations.*.overview.drive.roots.*.name",
     "stations.*.host.summary",
     "stations.*.host.line",
+    "stations.*.host.gpus.*.heading",
     "stations.*.host.details.*.value",
     "stations.*.way.path",
     "stations.*.home",
@@ -950,6 +952,7 @@ pub let said_paths : Map[String, Array[String]] = {
     "station.overview.drive.roots.*.name",
     "station.host.summary",
     "station.host.line",
+    "station.host.gpus.*.heading",
     "station.host.details.*.value",
     "station.way.path",
     "station.home",
@@ -1474,6 +1477,7 @@ pub let said_paths : Map[String, Array[String]] = {
     "*.overview.drive.roots.*.name",
     "*.host.summary",
     "*.host.line",
+    "*.host.gpus.*.heading",
     "*.host.details.*.value",
     "*.way.path",
     "*.home",

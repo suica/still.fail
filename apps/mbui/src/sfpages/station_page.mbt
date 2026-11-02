@@ -377,6 +377,7 @@ fn station_overview(c : @ui.Ctx, core : Core, here : Here, s : Json?) -> Array[(
         @sf.group(c, fn() {
           @sf.block(c, fn() {
             meter_dials(c, items(host, "meters"))
+            station_gpus(c, items(host, "gpus"))
             match (core.topic)("stationNet", { "station": str(address) }).value {
               Some(Object(_)) as net => station_net(c, net)
               _ => ()

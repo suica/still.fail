@@ -1,10 +1,12 @@
 // The machine's GPUs, for other stations choosing where work goes (station_list, load.ts): on Apple Silicon the
 // chip and its GPU cores (ioreg, once: they do not change), NVIDIA's through nvidia-smi when it is there (how busy they
-// are and their memory, read again at most every ten seconds); none otherwise. Never more than a moment's wait: a
+// are and their memory, read again at most every ten seconds), Linux DRM cards (linux-gpu.ts), and AMD models from
+// Windows' video controllers. Never more than a moment's wait: a
 // command that does not answer within GPU_WAIT_MS counts as none.
 import { execFile } from "node:child_process";
 import { wall } from "../ops/fibers.ts";
 import { platform } from "../platform/index.ts";
+import { linuxGpus, type LinuxGpu } from "./linux-gpu.ts";
 
 export type Gpu = { name: string; cores?: number; memoryTotalBytes?: number; memoryUsedBytes?: number; busy?: number };
 
@@ -13,6 +15,7 @@ export type Run = (file: string, args: string[], ms: number) => Promise<string |
 
 const GPU_WAIT_MS = 1500;
 const NVIDIA_KEEP_MS = 10_000;
+const WINDOWS_AMD = "(Get-CimInstance -ClassName Win32_VideoController | Where-Object { $_.PNPDeviceID -like 'PCI\\VEN_1002*' } | Select-Object -ExpandProperty Name) | ConvertTo-Json -Compress";
 
 const run: Run = (file, args, ms) =>
   new Promise((resolve) => {
@@ -46,6 +49,17 @@ export function nvidiaGpus(csv: string): Gpu[] {
   return gpus;
 }
 
+/// Windows PowerShell 5.1 returns one name as a JSON string and several as an array. Empty or unreadable is none.
+export function windowsAmdGpus(json: string): Gpu[] {
+  try {
+    const v: unknown = JSON.parse(json);
+    const names = Array.isArray(v) ? v : [v];
+    return names.filter((n): n is string => typeof n === "string" && n.trim() !== "").map((name) => ({ name: name.trim() }));
+  } catch {
+    return [];
+  }
+}
+
 export class Gpus {
   private run: Run;
   private os: string;
@@ -57,18 +71,39 @@ export class Gpus {
   private nvidia: { at: number; gpus: Gpu[] } | null = null;
   private asking: Promise<Gpu[]> | null = null;
   private absent = false;
+  private linuxRead: () => Promise<LinuxGpu[]>;
+  private linux: { at: number; cards: LinuxGpu[] } | null = null;
+  private linuxAsking: Promise<LinuxGpu[]> | null = null;
+  private windows: { at: number; gpus: Gpu[] } | null = null;
+  private windowsAsking: Promise<Gpu[]> | null = null;
 
-  constructor(options: { run?: Run; os?: string; arch?: string; now?: () => number } = {}) {
+  constructor(options: { run?: Run; os?: string; arch?: string; now?: () => number; linux?: () => Promise<LinuxGpu[]> } = {}) {
     this.run = options.run ?? run;
     this.os = options.os ?? platform.os;
     this.arch = options.arch ?? process.arch;
     this.now = options.now ?? wall.now;
+    this.linuxRead = options.linux ?? (() => linuxGpus(this.run));
   }
 
   /// The GPUs, or null when none is known. nvidia-smi is asked again once its answer is NVIDIA_KEEP_MS old; until the
   /// new one comes the last is given (the first is waited for, GPU_WAIT_MS at most).
   async read(): Promise<Gpu[] | null> {
     const gpus: Gpu[] = [];
+    if (this.os === "linux" && this.linuxAsking === null && (this.linux === null || this.now() - this.linux.at >= NVIDIA_KEEP_MS)) {
+      const at = this.now();
+      this.linuxAsking = this.linuxRead().catch(() => []).then((cards) => {
+        this.linux = { at, cards };
+        return cards;
+      }).finally(() => (this.linuxAsking = null));
+    }
+    if (this.os === "windows" && this.windowsAsking === null && (this.windows === null || this.now() - this.windows.at >= NVIDIA_KEEP_MS)) {
+      const at = this.now();
+      this.windowsAsking = this.run("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WINDOWS_AMD], GPU_WAIT_MS).catch(() => null).then((out) => {
+        const found = typeof out === "string" ? windowsAmdGpus(out) : [];
+        this.windows = { at, gpus: found };
+        return found;
+      }).finally(() => (this.windowsAsking = null));
+    }
     if (this.os === "macos" && this.arch === "arm64") {
       this.apple ??= this.run("ioreg", ["-rc", "AGXAccelerator", "-d1"], GPU_WAIT_MS).then((out) => (typeof out === "string" ? appleGpu(out) : null));
       const apple = await this.apple;
@@ -88,6 +123,13 @@ export class Gpus {
       }
       gpus.push(...(this.nvidia?.gpus ?? (this.asking ? await this.asking : [])));
     }
+    if (this.os === "linux") {
+      const cards = this.linux?.cards ?? (this.linuxAsking ? await this.linuxAsking : []);
+      // nvidia-smi has richer readings and sees headless cards; keep its entries in preference to DRM's copies.
+      const hasNvidia = gpus.length > 0;
+      gpus.push(...cards.filter((c) => c.vendor !== "0x10de" || !hasNvidia).map((c) => c.gpu));
+    }
+    if (this.os === "windows") gpus.push(...(this.windows?.gpus ?? (this.windowsAsking ? await this.windowsAsking : [])));
     return gpus.length === 0 ? null : gpus;
   }
 }

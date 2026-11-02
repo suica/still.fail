@@ -28,6 +28,8 @@ priv struct SettingsFixture {
   /// a Windows station's running as administrator, as the core shows it (its overview's `elevation`), as a test sets
   /// it; none: not a Windows station
   mut elevation : Json?
+  /// The station with two GPUs, for the resource overview's fixture.
+  mut gpus : Bool
   /// the mode's page has no station (settings-first-station)
   mut none : Bool
   /// the subscription's sign-in: "" none, "needs_code" under way (settings-profile-login), "failed"
@@ -93,6 +95,7 @@ let fx : SettingsFixture = {
   outflow: false,
   outflow_answer: None,
   elevation: None,
+  gpus: false,
   none: false,
   login: "",
   login_station: false,
@@ -183,6 +186,7 @@ fn fixture_reset() -> Unit {
   fx.outflow = false
   fx.outflow_answer = None
   fx.elevation = None
+  fx.gpus = false
   fx.congestion = "cubic"
   fx.none = false
   fx_adb.val = ""
@@ -347,6 +351,7 @@ pub fn fixture_page(mode : String) -> String {
     // The grants list with long reasons is itself in view for the spacing and corner sweeps.
     "settings-adb-chats-long" => up("", "settings/adb/", 4)
     "settings-station-mark" => up("mark", "", 0)
+    "settings-station-gpu" => fx.gpus = true
     // the page's 设置 (its variables' sheet up over it), its 软件与设备
     "settings-station-env" => station_parts["ws1/st1"] = "settings"
     // its 设置 with 高级网络设置 opened: its congestion control, a section of the page after it
@@ -448,7 +453,7 @@ pub fn fixture_page(mode : String) -> String {
   }
   match m {
     "settings" => "home"
-    "settings-station-mark" | "settings-station-env" | "settings-station-processes" | "settings-station-lower" | "settings-station-versions" | "settings-station-network" =>
+    "settings-station-mark" | "settings-station-gpu" | "settings-station-env" | "settings-station-processes" | "settings-station-lower" | "settings-station-versions" | "settings-station-network" =>
       "station:ws1/st1"
     "settings-stations-add" | "settings-stations-existing" | "settings-stations-command" | "settings-first-station" =>
       "stations"
@@ -981,9 +986,9 @@ fn fx_station(address : String) -> Json {
       ("id", str(id)),
       ("name", str(renamed.unwrap_or("Studio"))),
       ("icon", str(fx.marks.get(id).unwrap_or("glyph:desktop"))),
-      ("summary", str("Apple M2 Max · 2 个 agent 在工作")),
+      ("summary", str(if fx.gpus { "AMD EPYC · 2 个 agent 在工作" } else { "Apple M2 Max · 2 个 agent 在工作" })),
       ("face", str("working")),
-      ("line", str("Apple M2 Max · 64 GB · macOS 26")),
+      ("line", str(if fx.gpus { "AMD EPYC · 64 GB · Linux" } else { "Apple M2 Max · 64 GB · macOS 26" })),
       ("online", Json::boolean(true)),
       ("link", obj([("state", str("online"))])),
       ("runtimes", []),
@@ -998,7 +1003,13 @@ fn fx_station(address : String) -> Json {
       (
         "host",
         obj([
-          ("identity", str("Apple M2 Max · 64 GB · macOS 26")),
+          ("identity", str(if fx.gpus { "AMD EPYC · 64 GB · Linux" } else { "Apple M2 Max · 64 GB · macOS 26" })),
+          ("gpus", if fx.gpus {
+            [
+              obj([("heading", str("GPU 1 · NVIDIA GeForce RTX 4090")), ("detail", str("利用率 37% · 显存 4.0 GB / 24.0 GB"))]),
+              obj([("heading", str("GPU 2 · NVIDIA GeForce RTX 4090")), ("detail", str("利用率 0% · 显存 1.0 GB / 24.0 GB"))]),
+            ]
+          } else { [] }),
           (
             "meters",
             [

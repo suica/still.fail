@@ -23,6 +23,45 @@ fn meter_dials(c : @ui.Ctx, meters : Array[Json]) -> Unit {
 }
 
 ///|
+/// GPUs below the machine's dials, one per row so even a long list fits a narrow page. Each row says the model and
+/// only the figures the station can read.
+fn station_gpus(c : @ui.Ctx, gpus : Array[Json]) -> Unit {
+  if gpus.is_empty() {
+    return
+  }
+  c.box(style=gpu_list, fn() {
+    for gpu in gpus {
+      let v = Some(gpu)
+      c.box(style=gpu_row, fn() {
+        c.text(text(v, "heading"), style=gpu_heading) |> ignore
+        let detail = text(v, "detail")
+        if detail != "" {
+          c.text(detail, style=gpu_detail) |> ignore
+        }
+      })
+      |> ignore
+    }
+  })
+  |> ignore
+}
+
+///|
+// kept across runs: a value (no field of it changes)
+let gpu_list : @ui.Style = @ui.css("w=Full gap=S3 pt=S4")
+
+///|
+// kept across runs: a value (no field of it changes)
+let gpu_row : @ui.Style = @ui.css("w=Full gap=S0_5")
+
+///|
+// kept across runs: a value (no field of it changes)
+let gpu_heading : @ui.TextStyle = @ui.text_style(size=Ui, leading=L6, weight=Semibold, color=Fg, w=Full)
+
+///|
+// kept across runs: a value (no field of it changes)
+let gpu_detail : @ui.TextStyle = @ui.text_style(size=Meta, leading=L5, color=Muted, w=Full)
+
+///|
 /// An allowance's windows on its profile's page (QuotaBars, not compact): each what is left large over its cells, as
 /// far as is left, its name and when it refills.
 pub fn quota_dials(c : @ui.Ctx, windows : Array[Json]) -> Unit {
