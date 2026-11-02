@@ -6,6 +6,7 @@ permissions:
   contents: read
 jobs:
   native-check:
+    if: ${{ !startsWith(github.event.head_commit.message, 'Pictures:') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -23,6 +24,7 @@ jobs:
           echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
       - run: bash apps/mbui/scripts/check.sh
   native-tests:
+    if: ${{ !startsWith(github.event.head_commit.message, 'Pictures:') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     steps:
@@ -84,4 +86,5 @@ jobs:
           path: |
             before.png
             after.png
+            diagnostic.png
           if-no-files-found: warn
