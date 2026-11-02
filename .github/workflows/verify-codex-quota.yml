@@ -1,0 +1,93 @@
+name: Verify Codex allowance errors
+on:
+  push:
+    branches: [ci/codex-checkstate-20261102]
+permissions:
+  contents: read
+jobs:
+  station:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm install -g pnpm@10.33.0
+      - run: pnpm install --frozen-lockfile
+        working-directory: station
+      - run: pnpm run check
+        working-directory: station
+      - run: node --import ./test/setup-env.mjs --test test/accounts-quota.test.ts test/accounts-routes.test.ts
+        working-directory: station
+  core:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm install -g pnpm@10.33.0
+      - run: pnpm install --frozen-lockfile
+        working-directory: client/core-ts
+      - run: pnpm run check
+        working-directory: client/core-ts
+      - run: node --test --test-force-exit test/present.test.ts
+        working-directory: client/core-ts
+      - run: node client/core-ts/scripts/shapes.ts --check
+  app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - run: bash apps/mbui/scripts/check.sh
+      - run: MBC_JOBS=2 TARGETS=native PARTS=app APP_GROUP=pkgs bash apps/mbui/scripts/test.sh
+      - run: MBC_JOBS=2 TARGETS=native bash apps/mbui/scripts/screens.sh test
+  screenshots:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: Install screenshot tools
+        run: |
+          mkdir -p apps/mbui/out/node
+          cd apps/mbui/out/node
+          npm init -y
+          npm install pngjs playwright
+          npx playwright install --with-deps chromium
+      - name: Render the narrow and wide pages
+        run: |
+          SETTINGS_PAGES=profile-quota-login bash apps/mbui/scripts/shots.sh web-settings
+          cd apps/mbui
+          sed 's/width: 390, height: 844/width: 1280, height: 800/' scripts/web-shots.mjs > out/web-shots-wide.mjs
+          printf 'MBUI_FIXTURE=settings-profile-quota-login\tout/shots/web-wide-profile-quota-login.png\n' > out/web-shot-wide.txt
+          node out/web-shots-wide.mjs out/web-shot-wide.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: allowance-error-screenshots
+          path: |
+            apps/mbui/out/shots/web-settings-profile-quota-login.png
+            apps/mbui/out/shots/web-wide-profile-quota-login.png
