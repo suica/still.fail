@@ -1412,6 +1412,7 @@ let h_strong : @ui.TextStyle = @ui.text_style(size=Meta, leading=L5, weight=Semi
 
 ///|
 /// A reminder's label stays on one line; its preview gives way when the row is narrow.
+// kept across runs: a value (no field of it changes)
 let h_reminder : @ui.TextStyle = h_strong.then(@ui.text_style(wrap=false))
 
 ///|
