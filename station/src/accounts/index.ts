@@ -35,7 +35,7 @@ import { type Lang, stationLang, tr } from "../ops/i18n.ts";
 import { log } from "../ops/log.ts";
 import { allowedIn, hubConfig, type Profile } from "../sessions/config.ts";
 import { type Capability, discover as discoverDecisions, fingerprint, resolvedModel } from "../sessions/decision.ts";
-import { type ProfileHealth, serves, usable } from "../sessions/pool.ts";
+import { type ProfileHealth, quotaNeedsLogin, serves, usable } from "../sessions/pool.ts";
 import type { Store } from "../store/store.ts";
 import { joinPath } from "../ops/paths.ts";
 import { modelName } from "../ops/model-name.ts";
@@ -51,7 +51,7 @@ import { codexAccountIdentity, codexClaimsIn, type MachineLogin, MachineLogins }
 import { OUTDATED, uncheckOutdated } from "./models.ts";
 import { claudeOAuthToken } from "./oauth.ts";
 import { accessKinds, checkProfile, devinAccountFile, devinNotedIn, grokAuthFile, grokEmailIn, keyed, loginCommand, needsKey, type ProfileCheck, type ProfileQuota, runtimesFor, runtimesOf, URLS, type Urls } from "./profiles.ts";
-import { checkQuota, lentCodexUsage, machineUsage } from "./quota.ts";
+import { checkQuota, codexUsage, lentCodexUsage, machineUsage } from "./quota.ts";
 
 export { checkConfig } from "./check.ts";
 export type { LoginJob, MachineLogin, ProfileCheck, ProfileQuota };
@@ -94,6 +94,7 @@ export type CodexAccess = {
   rateLimits(profile: Profile): Promise<Json>;
   resetQuota(profile: Profile, key: string): Promise<Json>;
   models(profile: Profile): Promise<{ models: string[]; efforts: Map<string, string[]>; defaults?: Map<string, string> }>;
+  loginChanged?(profileId: string): Promise<void>;
 };
 
 export type AccountsDeps = {
@@ -136,6 +137,7 @@ export type AccountsDeps = {
   shared?: {
     status(profile: Profile): Promise<{ check: Json; quota: Json }>;
     view(profile: Json): Json | null;
+    lendCodex?(profile: Profile, rejected: boolean): Promise<number>;
     /// Whether the station the profile is another's of did not answer lately.
     hostName?(profile: Json): string | null;
   };
@@ -258,7 +260,20 @@ export class Accounts {
   /// followed, the checks after start, the allowance rounds, the machine's logins read.
   start() {
     this.deps.hub?.accounts.setHealth((id) => this.health(id));
-    this.deps.hub?.accounts.setRecheck?.((id) => this.check(id));
+    this.deps.hub?.accounts.setRecheck?.(async (id) => {
+      const profile = this.profile(id);
+      if (profile?.runtime === "codex" && accessKind(profile) === "subscription") {
+        // `codex login status` only checks the local file. Ask the provider before choosing the next account.
+        const read = await this.readQuota(id, true);
+        if (read?.state !== "ok" && read?.reason !== "login") {
+          // Even if the allowance endpoint is unreachable, the turn itself reported an authentication refusal.
+          const refused: ProfileQuota = { state: "unavailable", windows: [], reason: "login", detail: tr(stationLang(), "station.quota.codexLogin"), checkedAt: this.background.now() };
+          this.quotas.set(id, refused);
+          this.deps.store.setProfileQuota(id, refused);
+          this.changed();
+        }
+      } else await this.check(id);
+    });
     this.uncheckOutdated();
     // A finished sign-in changes what the profile can do; it is checked again right away.
     this.stops.push(
@@ -840,12 +855,21 @@ export class Accounts {
   /// shows them at once.
   private afterSignIn(id: string) {
     this.background.spawn(async () => {
+      const profile = this.profile(id);
+      if (profile?.runtime === "codex") {
+        try {
+          await this.deps.codex?.()?.loginChanged?.(id);
+        } catch (e) {
+          log.warn("accounts", "could not replace the codex app-server after sign-in", { profile: id, error: (e as Error).message });
+        }
+      }
       try {
         await this.check(id);
       } catch (e) {
         log.warn("accounts", "check after sign-in failed", { profile: id, error: (e as Error).message });
       }
-      await this.refreshQuota(id);
+      // A read begun before the sign-in must finish before a fresh one is recorded.
+      await this.readQuota(id, true);
     });
   }
 
@@ -955,7 +979,7 @@ export class Accounts {
       check = isObject(got.check) ? (got.check as ProfileCheck) : { state: "unknown", detail: "", models: null, checkedAt: 0 };
       // Unless what the borrowed login read here is newer.
       const mine = this.quotas.get(profile.id);
-      if (isObject(got.quota) && !(mine !== undefined && Number(got.quota.checkedAt ?? 0) < mine.checkedAt)) {
+      if (isObject(got.quota) && !quotaNeedsLogin(mine) && !(mine !== undefined && Number(got.quota.checkedAt ?? 0) < mine.checkedAt)) {
         this.quotas.set(profile.id, got.quota as ProfileQuota);
         this.deps.store.setProfileQuota(profile.id, got.quota);
       }
@@ -999,9 +1023,29 @@ export class Accounts {
     // (none lent yet, run out, refused) it comes with its host's check.
     if (borrowed(profile) && accessKind(profile) === "subscription" && this.deps.shared) {
       const now = this.background.now();
-      const own = profile.runtime === "codex" ? await lentCodexUsage(profile.home, now, this.urls).catch(() => null) : null;
+      let own = profile.runtime === "codex" ? await lentCodexUsage(profile.home, now, this.urls).catch(() => null) : null;
+      if (profile.runtime === "codex" && (own === null || own.reason === "login") && this.deps.shared.lendCodex) {
+        try {
+          // A revoked token may still have days until its expiry. Ask the host now, without falling back to that token.
+          await this.deps.shared.lendCodex(profile, true);
+          const refreshed = await lentCodexUsage(profile.home, this.background.now(), this.urls);
+          if (refreshed?.state === "ok") {
+            own = refreshed;
+            await this.deps.codex?.()?.loginChanged?.(id);
+          } else if (refreshed?.reason === "login") own = refreshed;
+        } catch {
+          // Keep a refusal from the token actually used here, even when the host is unavailable.
+        }
+      }
       if (own?.state === "ok") {
         const read = { ...own, checkedAt: now };
+        this.quotas.set(id, read);
+        this.deps.store.setProfileQuota(id, read);
+        this.changed();
+        return read;
+      }
+      if (own?.reason === "login") {
+        const read = { ...own, checkedAt: this.background.now() };
         this.quotas.set(id, read);
         this.deps.store.setProfileQuota(id, read);
         this.changed();
@@ -1012,7 +1056,16 @@ export class Accounts {
     }
     if (!this.quotaFn) return this.quotas.get(id) ?? null;
     const { signedOut, ...asked } = await this.quotaFn(profile);
-    const read = { ...asked, checkedAt: this.background.now() };
+    let current = asked;
+    if (profile.runtime === "codex" && accessKind(profile) === "subscription" && asked.reason === "login") {
+      // An app-server can still hold the pre-login token. Check the file directly before marking the account unusable.
+      const fresh = await codexUsage(join(profile.home, "auth.json"), this.urls).catch(() => null);
+      if (fresh?.state === "ok") {
+        await this.deps.codex?.()?.loginChanged?.(id);
+        current = fresh;
+      }
+    }
+    const read = { ...current, checkedAt: this.background.now() };
     this.quotas.set(id, read);
     this.deps.store.setProfileQuota(id, read);
     this.changed();

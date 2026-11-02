@@ -7,7 +7,7 @@ import { log } from "../ops/log.ts";
 import { tr, type Lang, stationLang } from "../ops/i18n.ts";
 import type { Store } from "../store/store.ts";
 import { type HubConfig, type Profile, runs, runtimeNamed, runtimeTitle, sameModel, spelling } from "./config.ts";
-import { availableEfforts, cheapToLeave, commonEfforts, type ProfileHealth, pickProfile, serves, urgency, usable, windowsOf } from "./pool.ts";
+import { availableEfforts, cheapToLeave, commonEfforts, type ProfileHealth, pickProfile, quotaNeedsLogin, serves, urgency, usable, windowsOf } from "./pool.ts";
 import type { RuntimeKind } from "../agents/runtime.ts";
 import { billedPerUse } from "../agents/profiles.ts";
 
@@ -90,7 +90,7 @@ export class Accounts {
     const key = this.accountKey(id, health);
     // Another profile of the same account may have read its allowance more recently. A failed read does not replace a
     // successful one; sign-in checks remain specific to each profile.
-    if (key.startsWith("account:")) {
+    if (key.startsWith("account:") && !quotaNeedsLogin(health.quota)) {
       for (const other of this.deps.config().profiles) {
         if (other.id === id) continue;
         const candidate = this.health(other.id);

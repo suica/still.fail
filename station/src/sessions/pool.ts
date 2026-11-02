@@ -14,6 +14,7 @@
 import { type Profile, runs, sameModel } from "./config.ts";
 import { billedPerUse } from "../agents/profiles.ts";
 import { COMPACTED_FROM } from "../store/rows.ts";
+import { codexQuotaFailure } from "../../../client/core-ts/src/codex-quota.ts";
 
 type Json = any;
 
@@ -39,6 +40,10 @@ const CROWDED_PERCENT = 80;
 const MIN_WEIGHT = 0.01;
 
 export const windowsOf = (quota: Json | null | undefined): Json[] => (quota && quota.state === "ok" && Array.isArray(quota.windows) ? quota.windows : []);
+
+/// A provider refused this profile's credentials, including an error kept by an older station.
+export const quotaNeedsLogin = (quota: Json | null | undefined): boolean =>
+  quota?.reason === "login" || (typeof quota?.detail === "string" && codexQuotaFailure(quota.detail).kind === "login");
 
 /// How much of its tightest window a profile has used, 0–100; unknown counts as half.
 function used(quota: Json | null | undefined): number {
@@ -105,7 +110,7 @@ export function cheapToLeave(calls: ContextCall[], points: Map<string, number>):
 /// ran into its allowance since.
 export function usable(health: ProfileHealth): boolean {
   const state = health.check?.state;
-  return !health.spent && state !== "login" && state !== "failed" && used(health.quota) < 100;
+  return !health.spent && state !== "login" && state !== "failed" && !quotaNeedsLogin(health.quota) && used(health.quota) < 100;
 }
 
 /// A chosen model needs the profile to run it; no model means the profile's own default.
