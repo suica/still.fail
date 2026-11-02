@@ -53,6 +53,8 @@ export type ProfileQuota = {
   resetCount?: number;
   /// The subscription tier, when the provider reports it with the allowance.
   plan?: string;
+  /// A specific recovery for an unavailable allowance, independent of the last account check.
+  reason?: "login";
   detail: string | null;
   checkedAt: number;
   /// Asked with a login that turned out to be over (oauth.ts RenewRefused): its profile is checked again. Not kept.

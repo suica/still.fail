@@ -607,6 +607,8 @@ export interface Quota {
 	resetText?: string;
 	/** ok | unsupported | unavailable | blocked (the provider refuses the account) */
 	state: string;
+	/** login: the allowance request found the sign-in invalid; absent on older stations. */
+	reason?: string;
 	windows: QuotaWindow[];
 	detail?: string;
 	checkedAt: number;

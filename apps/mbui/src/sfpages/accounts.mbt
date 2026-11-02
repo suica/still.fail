@@ -113,7 +113,7 @@ fn profile_view(c : @ui.Ctx, core : Core, here : Here, frame : PageFrame, s : Js
   let blocks : Array[() -> Unit] = []
   // what to do first: a subscription to sign in (or signing in, or its last sign-in failed), else what its trouble
   // says to do
-  let needed = text(check, "state") == "login" || signing_in
+  let needed = text(check, "state") == "login" || text(field(p, "trouble"), "action") == "login" || signing_in
   let asked = needed || text(login, "state") == "failed"
   if !copy && signs_in && !machine && asked {
     blocks.push(fn() { profile_sign_in(c, core, address, text(s, "name"), p, needed) })
@@ -160,11 +160,12 @@ fn profile_head(c : @ui.Ctx, core : Core, here : Here, address : String, name : 
   let on = [("station", address), ("id", id)]
   let copy = text(field(p, "share"), "role") == "user"
   let machine = flag(p, "machine")
+  let quota_login = text(field(p, "quota"), "reason") == "login"
   // what it is, in a line: its kind, the address signed in (when not its name), where it is
   let email = text(p, "email")
   // of an account on several stations, this station's (each's own part is under 各 station), not all of them
   let several = items(entry, "members").filter(fn(m) { text(Some(m), "role") != "user" }).length() > 1
-  let place = if several {
+  let place = if several || quota_login {
     @sf.t("web-pages.profiles.onStation", args=[("station", name)])
   } else {
     text(entry, "where")
@@ -181,15 +182,18 @@ fn profile_head(c : @ui.Ctx, core : Core, here : Here, address : String, name : 
     rename_label=@sf.t("web-pages.settings.stations.rename"),
     lines=[facts],
     state=fn() {
-      if text(p, "checkTone") != "green" {
+      if quota_login {
+        @sf.pill(c, text(field(p, "trouble"), "title"), tone=Amber)
+      } else if text(p, "checkTone") != "green" {
         @sf.pill(c, text(p, "checkText"), tone=pill_tone(text(p, "checkTone")))
       }
       // what the check said and when, words of one line (short of room, cut from its end: when it was checked first;
       // nothing of it moving under the rest as what the check said changes); checking again kept
-      let ago = text(field(field(field(p, "check"), "time"), "checkedAt"), "ago")
+      let checked = if quota_login { field(p, "quota") } else { field(p, "check") }
+      let ago = text(field(field(checked, "time"), "checkedAt"), "ago")
       let when = if ago != "" { @sf.t("web-pages.profiles.checkedAt", args=[("time", ago)]) } else { "" }
       c.box(style=pf_state, fn() {
-        c.text(join([text(p, "checkLine"), when], " · "), style=pf_check_words) |> ignore
+        c.text(join([if quota_login { "" } else { text(p, "checkLine") }, when], " · "), style=pf_check_words) |> ignore
         let checking = is_doing(core, ["profile.check"], on)
         if @sf.icon_action(c, "refresh", "profile-check/" + address + "/" + id, @sf.t("web-pages.profiles.recheck"), disabled=checking) {
           @settings.act(core, @sf.t("web-pages.profiles.recheck"), "profile.check", obj([("station", str(address)), ("id", str(id))]))
@@ -332,17 +336,21 @@ fn profile_sign_in(c : @ui.Ctx, core : Core, address : String, station_name : St
   let job = field(p, "login")
   let state = text(job, "state")
   let provider = text(p, "signInProvider")
+  let quota_login = text(field(p, "quota"), "reason") == "login"
   let active = ["starting", "needs_code", "needs_approval", "verifying"].contains(state)
   let key = address + "/" + id
   @sf.page_card(c, footed=true, fn() {
     if !active {
       @sf.card_lines(
         c,
-        if needed {
+        if quota_login {
+          text(field(p, "trouble"), "title")
+        } else if needed {
           @sf.t("web-pages.profiles.notSignedIn", args=[("provider", provider)])
         } else {
           @sf.t("web-pages.profiles.subscriptionSignIn", args=[("provider", provider)])
         },
+        words=if quota_login { text(field(p, "trouble"), "detail") } else { "" },
         note=match state {
           "failed" => ""
           "done" => @sf.t("web-pages.profiles.signedInSwitch")
@@ -358,7 +366,7 @@ fn profile_sign_in(c : @ui.Ctx, core : Core, address : String, station_name : St
         let starting = is_doing(core, ["profile.login"], on)
         if @sf.button(
             c,
-            if state == "done" || !needed {
+            if state == "done" || !needed || quota_login {
               @sf.t("web-pages.signIn.again")
             } else {
               @sf.t("web-pages.profiles.signIn")
@@ -606,6 +614,12 @@ fn profile_trouble(c : @ui.Ctx, core : Core, s : Json?, p : Json?) -> Unit {
           "env" => profile_edit.env_open = station + "/" + id
           "quota" =>
             @settings.act(core, @sf.t("android-settings.quota.checkWhat"), "profile.quota", obj([("station", str(station)), ("id", str(id))]), done=@sf.t("android-settings.quota.updated"))
+          "command" => {
+            check()
+            if text(field(p, "quota"), "reason") == "login" {
+              @settings.act(core, @sf.t("android-settings.quota.checkWhat"), "profile.quota", obj([("station", str(station)), ("id", str(id))]))
+            }
+          }
           _ => check()
         }
       }

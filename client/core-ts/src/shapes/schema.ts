@@ -564,6 +564,7 @@ export const SHAPES: Record<string, Shape> = {
     ["creditsText", opt("String")],
     ["resetText", opt("String")],
     ["state", "String", { doc: "ok | unsupported | unavailable | blocked (the provider refuses the account)" }],
+    ["reason", opt("String"), { doc: "login: the allowance request found the sign-in invalid; absent on older stations." }],
     ["windows", vec("QuotaWindow")],
     ["detail", opt("String"), { said: true }],
     ["checkedAt", "i64", { client: "I54" }],
