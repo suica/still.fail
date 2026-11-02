@@ -23,4 +23,4 @@ jobs:
       - name: Test login, sharing, account selection and Codex sessions
         run: |
           cd station
-          node ../scripts/native.ts run mesh runner archive-rs -- node --import ./test/setup-env.mjs --test --test-concurrency=2 --test-timeout=600000 test/accounts-quota.test.ts test/accounts-routes.test.ts test/codex.test.ts test/hub.test.ts test/hub-parts.test.ts test/pool-shared-account.test.ts test/share.test.ts
+          node ../scripts/native.ts run mesh runner -- node --import ./test/setup-env.mjs --test --test-concurrency=2 --test-timeout=600000 test/accounts-quota.test.ts test/accounts-routes.test.ts test/codex.test.ts test/hub.test.ts test/hub-parts.test.ts test/pool-shared-account.test.ts test/share.test.ts
