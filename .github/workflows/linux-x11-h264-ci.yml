@@ -20,6 +20,17 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y ffmpeg xdotool xvfb xauth x11-utils x11-xkb-utils x11-xserver-utils
           pnpm --dir station install --frozen-lockfile
+      - name: Compare Xvfb reset behavior
+        working-directory: station
+        run: |
+          export XDG_SESSION_TYPE=x11
+          unset WAYLAND_DISPLAY
+          echo 'Normal Xvfb'
+          xvfb-run -a -s '-screen 0 1280x800x24' node side/x11-reset-diagnostic.ts
+          echo 'A persistent desktop client'
+          KEEP_X_CLIENT=1 xvfb-run -a -s '-screen 0 1280x800x24' node side/x11-reset-diagnostic.ts
+          echo 'Xvfb with resets disabled'
+          xvfb-run -a -s '-screen 0 1280x800x24 -noreset' node side/x11-reset-diagnostic.ts
       - name: Typecheck and screen regression tests
         working-directory: station
         run: |
