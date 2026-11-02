@@ -7,7 +7,7 @@ permissions:
 jobs:
   moonbit:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 5
     steps:
       - name: Install MoonBit as the repository's MoonBit workflow does
         env:

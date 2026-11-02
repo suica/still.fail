@@ -35,7 +35,7 @@ jobs:
     name: native (${{ matrix.part }}${{ matrix.group && format(' {0}', matrix.group) || '' }})
     runs-on: ubuntu-24.04
     # (a push's 5 minutes, the pipeline's call of a branch's push too; the day's, its pages in one process, 10)
-    timeout-minutes: 15
+    timeout-minutes: ${{ github.event_name == 'push' && 5 || 10 }}
     strategy:
       fail-fast: false
       matrix:
@@ -192,7 +192,7 @@ jobs:
   app-build:
     name: native (app build)
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     env:
       PART: app
       GROUP: build
@@ -208,7 +208,7 @@ jobs:
     needs: app-build
     runs-on: ubuntu-24.04
     # (a push's 5 minutes; the day's, its pages in one process, 10)
-    timeout-minutes: 15
+    timeout-minutes: ${{ github.event_name == 'push' && 5 || 10 }}
     strategy:
       fail-fast: false
       matrix:
