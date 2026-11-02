@@ -41,6 +41,9 @@ fn main {
     // MBUI_UPDATE=<version>: a newer build offered
     if @ui.env("MBUI_UPDATE") != "" {
       @sffixture.fixture_update(@ui.env("MBUI_UPDATE"))
+      if @ui.env("MBUI_UPDATE_READY") == "1" {
+        @sffixture.fixture_update_goes(@ui.env("MBUI_UPDATE"), "ready", away=false)
+      }
     }
     // what the mode opens over Home before the first frame (src/sfapp/fixture.mbt: screens_wbtest.mbt opens the same)
     @sfapp.open_fixture_over(mode, src)

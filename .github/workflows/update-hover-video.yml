@@ -1,0 +1,42 @@
+name: Record update hover
+on:
+  push:
+    branches: [ci/update-hover-video-e7d9]
+permissions:
+  contents: read
+jobs:
+  record:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Linux host dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends libgtk-4-dev libepoxy-dev libpango1.0-dev libcairo2-dev libfontconfig-dev libgdk-pixbuf-2.0-dev libsoup-3.0-dev zlib1g-dev libgl1-mesa-dri libegl-mesa0 xvfb xauth fonts-noto-cjk fonts-noto-color-emoji xdotool ffmpeg
+      - name: Install MoonBit
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: Build the native fixture
+        run: |
+          set +e
+          APP=sffix MODE=release bash apps/mbui/scripts/linux.sh build > "$RUNNER_TEMP/hover-build.log" 2>&1
+          result=$?
+          set -e
+          if [ "$result" -ne 0 ]; then
+            awk 'length($0) < 2000' "$RUNNER_TEMP/hover-build.log" | tail -100
+            exit "$result"
+          fi
+          tail -5 "$RUNNER_TEMP/hover-build.log"
+      - name: Record the app and pointer
+        run: xvfb-run -a -s '-screen 0 1280x820x24 +extension GLX +render -noreset' bash apps/mbui/scripts/update-hover-video.sh
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: update-hover-video
+          path: |
+            ${{ runner.temp }}/hover-evidence/*
+            ${{ runner.temp }}/hover-build.log
