@@ -1,0 +1,43 @@
+name: Cache menu verification
+on:
+  push:
+    branches: [ci/cache-menu-3352]
+permissions:
+  contents: read
+jobs:
+  mac-app:
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: Check app
+        run: bash apps/mbui/scripts/check.sh
+      - name: Test app
+        run: PARTS=app SFAPP_SHARDS=2 bash apps/mbui/scripts/test.sh
+      - name: Test screens
+        run: bash apps/mbui/scripts/screens.sh test
+      - name: Build Mac fixture app
+        run: APP=sffix bash apps/mbui/scripts/mac.sh build
+  replay:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          export PATH="$MOON_HOME/bin:$PATH"
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+      - name: Test core and recorded flows
+        run: PARTS=replay bash apps/mbui/scripts/test.sh
