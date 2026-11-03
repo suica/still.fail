@@ -40,13 +40,23 @@ printf "%s\n" "{\"op\":\"input\",\"event\":{\"t\":\"key\",\"keycode\":30,\"kind\
 printf "%s\n" "{\"op\":\"input\",\"event\":{\"t\":\"key\",\"keycode\":30,\"kind\":\"up\"}}" >&3
 for _ in $(seq 1 100); do grep -q text:a "$TEST_ROOT/target.log" && break; sleep 0.1; done
 grep -q text:a "$TEST_ROOT/target.log"
+printf "%s\n" "{\"op\":\"input\",\"event\":{\"t\":\"text\",\"text\":\"Hi!你好\"}}" >&3
+for _ in $(seq 1 100); do grep -q "text:aHi!你好" "$TEST_ROOT/target.log" && break; sleep 0.1; done
+grep -q "text:aHi!你好" "$TEST_ROOT/target.log"
 printf "%s\n" "{\"op\":\"input\",\"event\":{\"t\":\"pointer\",\"kind\":\"down\",\"x\":0.5,\"y\":0.75,\"buttons\":1}}" >&3
 printf "%s\n" "{\"op\":\"input\",\"event\":{\"t\":\"pointer\",\"kind\":\"up\",\"x\":0.5,\"y\":0.75,\"buttons\":0}}" >&3
 for _ in $(seq 1 100); do grep -q clicked "$TEST_ROOT/target.log" && break; sleep 0.1; done
 grep -q clicked "$TEST_ROOT/target.log"
+printf "%s\n" "{\"op\":\"input\",\"event\":{\"t\":\"pointer\",\"kind\":\"down\",\"x\":0.5,\"y\":0.75,\"buttons\":1}}" >&3
+printf "%s\n" "{\"op\":\"input\",\"event\":{\"t\":\"key\",\"keycode\":48,\"kind\":\"down\"}}" >&3
+for _ in $(seq 1 100); do grep -q key-down:b "$TEST_ROOT/target.log" && break; sleep 0.1; done
+grep -q key-down:b "$TEST_ROOT/target.log"
 printf "%s\n" "{\"op\":\"close\"}" >&3
 wait "$hp"
 hp=
+for _ in $(seq 1 100); do grep -q key-up:b "$TEST_ROOT/target.log" && [ "$(grep -c button-up "$TEST_ROOT/target.log")" -ge 2 ] && break; sleep 0.1; done
+grep -q key-up:b "$TEST_ROOT/target.log"
+[ "$(grep -c button-up "$TEST_ROOT/target.log")" -ge 2 ]
 cat "$TEST_ROOT/target.log"
 /usr/bin/python3 - "$TEST_ROOT/framed.bin" <<"PY"
 import json, struct, sys
@@ -58,6 +68,8 @@ with open(sys.argv[1], "rb") as f:
         kind, size = struct.unpack(">BI", header)
         payload = f.read(size)
         if len(payload) != size: break
+        if kind == 2 and payload[:2] == b"\xff\xd8" and not any(f.get("jpeg") for f in frames):
+            with open("/test/centos-frame.jpg", "wb") as image: image.write(payload)
         frames.append(json.loads(payload) if kind == 1 else {"frame": len(payload), "jpeg": payload[:2] == b"\xff\xd8"})
 print(frames[:8])
 assert any(f.get("jpeg") for f in frames), "no JPEG frame"

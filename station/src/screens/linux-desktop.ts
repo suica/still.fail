@@ -2,7 +2,7 @@
 import { hostname } from "node:os";
 import { desktopEnvironment } from "./linux-session.ts";
 import { LinuxScreenTools } from "./linux-tools.ts";
-import { WaylandDesktop } from "./linux-portal.ts";
+import { LinuxGstDesktop } from "./linux-portal.ts";
 import type { ScreenAccess, ScreenSource, ScreenView, ViewOptions } from "./source.ts";
 import { X11Desktop, type X11DesktopOptions } from "./x11-desktop.ts";
 
@@ -14,19 +14,25 @@ export class LinuxDesktop implements ScreenSource {
   readonly #o: LinuxOptions;
   readonly #x11Options: X11DesktopOptions;
   readonly #waylandOptions: { changed: () => void; env: NodeJS.ProcessEnv };
+  readonly #fallbackOptions: { changed: () => void; env: NodeJS.ProcessEnv; mode: "x11" };
+  readonly #tools: LinuxScreenTools;
   readonly #x11: X11Desktop;
-  readonly #wayland: WaylandDesktop;
-  #current: X11Desktop | WaylandDesktop;
+  readonly #wayland: LinuxGstDesktop;
+  readonly #fallback: LinuxGstDesktop;
+  #current: X11Desktop | LinuxGstDesktop;
   #refreshing: Promise<void> | null = null;
   #looked = 0;
 
   constructor(options: LinuxOptions) {
     this.#o = options;
     const env = { ...(options.env ?? process.env) };
-    this.#x11Options = { changed: options.changed, env, tools: new LinuxScreenTools(options.data) };
+    this.#tools = new LinuxScreenTools(options.data);
+    this.#x11Options = { changed: options.changed, env, tools: this.#tools };
     this.#waylandOptions = { changed: options.changed, env };
+    this.#fallbackOptions = { changed: options.changed, env, mode: "x11" };
     this.#x11 = new X11Desktop(this.#x11Options);
-    this.#wayland = new WaylandDesktop(this.#waylandOptions);
+    this.#wayland = new LinuxGstDesktop(this.#waylandOptions);
+    this.#fallback = new LinuxGstDesktop(this.#fallbackOptions);
     this.#current = env.XDG_SESSION_TYPE?.toLowerCase() === "wayland" || env.WAYLAND_DISPLAY ? this.#wayland : this.#x11;
   }
   title(): string { return hostname(); }
@@ -38,9 +44,18 @@ export class LinuxDesktop implements ScreenSource {
       const env = await (this.#o.discover ?? desktopEnvironment)(this.#o.env ?? process.env);
       this.#x11Options.env = env;
       this.#waylandOptions.env = env;
-      const next = env.XDG_SESSION_TYPE?.toLowerCase() === "wayland" || env.WAYLAND_DISPLAY ? this.#wayland : this.#x11;
+      this.#fallbackOptions.env = env;
+      let next: X11Desktop | LinuxGstDesktop;
+      if (env.XDG_SESSION_TYPE?.toLowerCase() === "wayland" || env.WAYLAND_DISPLAY) {
+        next = this.#wayland;
+      } else {
+        await this.#x11.refresh(force);
+        // CentOS's standard repositories do not provide both X11 commands. Its installed desktop's GStreamer and
+        // XTest libraries can capture and control the same session without adding system repositories.
+        next = this.#x11.access().reason === "linuxTools" && !this.#tools.canPrepare(env) ? this.#fallback : this.#x11;
+      }
       if (next !== this.#current) { this.#current = next; this.#o.changed(); }
-      await next.refresh(force);
+      if (next !== this.#x11) await next.refresh(force);
     })().finally(() => { this.#looked = Date.now(); this.#refreshing = null; });
     await this.#refreshing;
   }
@@ -48,5 +63,5 @@ export class LinuxDesktop implements ScreenSource {
     await this.refresh(true);
     return this.#current.open(options);
   }
-  async close(): Promise<void> { await Promise.all([this.#x11.close(), this.#wayland.close()]); }
+  async close(): Promise<void> { await Promise.all([this.#x11.close(), this.#wayland.close(), this.#fallback.close()]); }
 }

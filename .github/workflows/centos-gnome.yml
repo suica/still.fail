@@ -64,5 +64,6 @@ jobs:
           name: centos-gnome-diagnostics
           path: |
             ${{ runner.temp }}/centos-gnome/*.png
+            ${{ runner.temp }}/centos-gnome/*.jpg
             ${{ runner.temp }}/centos-gnome/*.log
             ${{ runner.temp }}/centos-gnome/run/*.log

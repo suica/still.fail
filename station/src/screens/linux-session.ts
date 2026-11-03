@@ -52,6 +52,11 @@ export async function desktopEnvironment(base: NodeJS.ProcessEnv = process.env):
       // The portal backend uses the desktop activation environment, not the station's inherited Wayland socket.
       delete env.DISPLAY;
       delete env.XAUTHORITY;
+      try {
+        const activation = await run("systemctl", ["--user", "show-environment"], { env, timeout: 2_000, maxBuffer: 256_000 });
+        const values = fields(activation.stdout);
+        if (values.WAYLAND_DISPLAY) env.WAYLAND_DISPLAY = values.WAYLAND_DISPLAY;
+      } catch { /* The portal can still use the user's D-Bus session without a Wayland socket here. */ }
       env.WAYLAND_DISPLAY ||= "wayland-0";
       return env;
     }
@@ -61,6 +66,7 @@ export async function desktopEnvironment(base: NodeJS.ProcessEnv = process.env):
       const activation = await run("systemctl", ["--user", "show-environment"], { env, timeout: 2_000, maxBuffer: 256_000 });
       const values = fields(activation.stdout);
       if (values.DISPLAY && (!session.display || values.DISPLAY === session.display)) {
+        if (env.DISPLAY !== values.DISPLAY) delete env.XAUTHORITY;
         env.DISPLAY = values.DISPLAY;
         if (values.XAUTHORITY) env.XAUTHORITY = values.XAUTHORITY;
       } else if (session.display && env.DISPLAY !== session.display) {

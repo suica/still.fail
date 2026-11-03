@@ -1,5 +1,5 @@
-// A Linux desktop shared through the session's XDG RemoteDesktop and ScreenCast portals. The companion Python
-// process holds the portal session and PipeWire fd for exactly as long as the view does; it sends only complete JPEGs.
+// Linux desktop views made with GStreamer. Wayland uses the session's XDG RemoteDesktop and ScreenCast portals;
+// X11 can use this path when ffmpeg and xdotool are unavailable. Each helper sends complete JPEGs.
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { existsSync } from "node:fs";
 import { hostname } from "node:os";
@@ -12,10 +12,12 @@ const MAX_FRAME = 16 * 1024 * 1024;
 const CONSENT_WAIT = 4_000;
 const FRAME_WAIT = 12_000;
 type Size = { width: number; height: number };
+type Picture = { data: Buffer; ts: number; size: Size };
 
 type PortalOptions = {
   changed: () => void;
   env: NodeJS.ProcessEnv;
+  mode?: "wayland" | "x11";
   title?: () => string;
   python?: string;
   helper?: string;
@@ -23,11 +25,11 @@ type PortalOptions = {
 };
 
 /// Beside the source in development, beside the station's main.js in its release.
-function helperPath(): string {
-  return fileURLToPath(new URL("./linux-portal.py", import.meta.url));
+function helperPath(mode: PortalOptions["mode"]): string {
+  return fileURLToPath(new URL(mode === "x11" ? "./linux-x11.py" : "./linux-portal.py", import.meta.url));
 }
 
-export class WaylandDesktop implements ScreenSource {
+export class LinuxGstDesktop implements ScreenSource {
   readonly id = "desktop";
   readonly kind = "desktop" as const;
   readonly #o: PortalOptions;
@@ -41,26 +43,29 @@ export class WaylandDesktop implements ScreenSource {
   title(): string { return this.#o.title?.() ?? hostname(); }
   size(): Size { return { ...this.#size }; }
   access(): ScreenAccess {
-    if (this.#pending && !this.#pending.isReady) return { capture: false, control: false, reason: "linuxPortalConsent", asking: true };
-    if (this.#failed) return { capture: false, control: false, reason: "linuxPortalUnavailable" };
+    if (this.#pending && !this.#pending.isReady) return this.#o.mode === "x11"
+      ? { capture: false, control: false, reason: "linuxDesktopStarting" }
+      : { capture: false, control: false, reason: "linuxPortalConsent", asking: true };
+    if (this.#failed) return { capture: false, control: false, reason: this.#o.mode === "x11" ? "linuxX11FallbackUnavailable" : "linuxPortalUnavailable" };
     return { capture: true, control: true };
   }
   async refresh(_force = false): Promise<void> {} // Listing the desktop never opens a permission dialog.
 
   async open(options: ViewOptions): Promise<ScreenView> {
     if (!options.codecs.includes("jpeg")) throw new ScreenRefused(415, "station.screen.codec", { codec: "JPEG" });
-    if (this.#closed) throw new ScreenRefused(503, "station.screen.linuxPortalUnavailable");
+    const failure = this.#o.mode === "x11" ? "linuxX11FallbackUnavailable" : "linuxPortalUnavailable";
+    if (this.#closed) throw new ScreenRefused(503, `station.screen.${failure}`);
     if (!this.#pending) {
       this.#failed = false;
-      const helper = this.#o.helper ?? helperPath();
-      if (!existsSync(helper)) throw new ScreenRefused(503, "station.screen.linuxPortalUnavailable");
+      const helper = this.#o.helper ?? helperPath(this.#o.mode);
+      if (!existsSync(helper)) throw new ScreenRefused(503, `station.screen.${failure}`);
       const process = new PortalProcess(this.#o.python ?? "/usr/bin/python3", helper, this.#o.env,
         (size) => { this.#size = size; this.#o.changed(); },
         () => {
           this.#views.delete(process);
           if (this.#pending === process) { this.#pending = null; this.#failed = !process.finishedNormally; }
           if (!this.#closed) this.#o.changed();
-        });
+        }, this.#o.mode === "x11" ? "X11 / GStreamer" : "XDG Desktop Portal / PipeWire");
       this.#pending = process;
       void process.ready.then(() => this.#o.changed(), () => {});
     }
@@ -73,9 +78,9 @@ export class WaylandDesktop implements ScreenSource {
       ]).finally(() => { if (timer) clearTimeout(timer); });
       if (!ready) {
         this.#o.changed();
-        throw new ScreenRefused(503, "station.screen.linuxPortalConsent", {}, this.access());
+        throw new ScreenRefused(503, `station.screen.${this.#o.mode === "x11" ? "linuxDesktopStarting" : "linuxPortalConsent"}`, {}, this.access());
       }
-      // An open consumes the prepared portal session. Another caller waiting on it needs its own session.
+      // An open consumes the prepared portal session. Concurrent opens prepare their own and ask separately.
       if (this.#pending !== pending) return await this.open(options);
       this.#pending = null;
       this.#views.add(pending);
@@ -86,7 +91,7 @@ export class WaylandDesktop implements ScreenSource {
       pending.close();
       this.#failed = true;
       this.#o.changed();
-      throw new ScreenRefused(503, "station.screen.linuxPortalUnavailable", {}, this.access());
+      throw new ScreenRefused(503, `station.screen.${failure}`, {}, this.access());
     }
   }
 
@@ -103,6 +108,7 @@ class PortalProcess implements ScreenView {
   readonly #child: ChildProcessWithoutNullStreams;
   readonly #sizeChanged: (size: Size) => void;
   readonly #gone: () => void;
+  readonly #capture: string;
   readonly #keys = new Set<number>();
   #resolveReady!: () => void;
   #rejectReady!: (error: Error) => void;
@@ -110,19 +116,24 @@ class PortalProcess implements ScreenView {
   #rejectFirst!: (error: Error) => void;
   #carry: Buffer = Buffer.alloc(0);
   #picture: Size = { width: 0, height: 0 };
-  #latest: { data: Buffer; ts: number } | null = null;
-  #waiting: ((frame: Frame | null) => void)[] = [];
+  #latest: Picture | null = null;
+  #last: Picture | null = null;
+  #shown: Size | null = null;
+  #waiting: { resolve: (frame: Frame | null) => void; reject: (error: Error) => void }[] = [];
+  #failure: ScreenRefused | null = null;
   #config = true;
   #lastTs = 0;
+  #input: Promise<void> = Promise.resolve();
   #opened = false;
   #ready = false;
   #ended = false;
   #normal = false;
   #error = "";
 
-  constructor(python: string, helper: string, env: NodeJS.ProcessEnv, sizeChanged: (size: Size) => void, gone: () => void) {
+  constructor(python: string, helper: string, env: NodeJS.ProcessEnv, sizeChanged: (size: Size) => void, gone: () => void, capture: string) {
     this.#sizeChanged = sizeChanged;
     this.#gone = gone;
+    this.#capture = capture;
     this.ready = new Promise((resolve, reject) => { this.#resolveReady = resolve; this.#rejectReady = reject; });
     this.#first = new Promise((resolve, reject) => { this.#resolveFirst = resolve; this.#rejectFirst = reject; });
     // A process can fail before open() awaits one of its promises.
@@ -164,49 +175,71 @@ class PortalProcess implements ScreenView {
       this.#carry = this.#carry.subarray(length + 5);
       if (kind === 1) {
         try {
-          const message = JSON.parse(body.toString()) as { type?: string; width?: number; height?: number; message?: string };
+          const message = JSON.parse(body.toString()) as { type?: string; width?: number; height?: number; message?: string; code?: string };
           if (message.type === "ready") {
             this.#ready = true;
             if (message.width && message.height) this.#sizeChanged({ width: message.width, height: message.height });
             this.#resolveReady();
           } else if (message.type === "picture") {
-            if (!message.width || !message.height || message.width > 16384 || message.height > 16384) throw new Error("invalid desktop picture size");
-            // Do not label an older queued picture with the new size while its first frame is still in the pipe.
-            this.#latest = null;
+            if (typeof message.width !== "number" || typeof message.height !== "number" || !Number.isInteger(message.width) || !Number.isInteger(message.height) || message.width < 1 || message.height < 1 || message.width > 16384 || message.height > 16384) throw new Error("invalid desktop picture size");
             this.#picture = { width: message.width, height: message.height };
-            this.#config = true;
           } else if (message.type === "error") {
             this.#end(new Error(message.message || "desktop portal failed"));
+          } else if (message.type === "input_error" && message.code === "textUnsupported") {
+            this.#end(new ScreenRefused(422, "station.screen.linuxTextUnsupported"));
           }
         } catch (error) { this.#end(error as Error); }
+        if (this.#ended) return;
       } else if (kind === 2) {
         if (!this.#picture.width || !this.#picture.height) { this.#end(new Error("desktop portal sent a picture without its size")); return; }
         const ts = Math.max(this.#lastTs + 1, Number(process.hrtime.bigint() / 1000n));
         this.#lastTs = ts;
+        const picture = { data: body, ts, size: this.#picture };
+        this.#last = picture;
         const waiting = this.#waiting.shift();
-        if (waiting) waiting(this.#frame(body, ts)); else this.#latest = { data: body, ts };
+        if (waiting) waiting.resolve(this.#frame(picture)); else this.#latest = picture;
         if (!this.#opened) { this.#opened = true; this.#resolveFirst(); }
       } else { this.#end(new Error("unrecognized desktop portal frame")); return; }
     }
   }
-  #frame(data: Buffer, ts: number): Frame {
-    const config = this.#config ? { config: { codec: "jpeg" as const, ...this.#picture } } : {};
+  #frame(picture: Picture): Frame {
+    const { data, ts, size } = picture;
+    const changed = !this.#shown || this.#shown.width !== size.width || this.#shown.height !== size.height;
+    const config = this.#config || changed ? { config: { codec: "jpeg" as const, ...size } } : {};
     this.#config = false;
+    this.#shown = size;
     return { ...config, key: true, ts, data };
   }
   next(): Promise<Frame | null> {
+    if (this.#failure) return Promise.reject(this.#failure);
     if (this.#ended) return Promise.resolve(null);
     if (this.#latest) {
-      const { data, ts } = this.#latest;
+      const picture = this.#latest;
       this.#latest = null;
-      return Promise.resolve(this.#frame(data, ts));
+      return Promise.resolve(this.#frame(picture));
     }
-    return new Promise((resolve) => this.#waiting.push(resolve));
+    return new Promise((resolve, reject) => this.#waiting.push({ resolve, reject }));
   }
-  keyframe(): void {} // Every JPEG is a key frame.
-  video(): ScreenVideo { return { capture: "XDG Desktop Portal / PipeWire", encoder: "GStreamer JPEG (software)" }; }
+  keyframe(): void {
+    // Like a browser tab's JPEG view, replay the last picture if the desktop has not changed since it was sent.
+    if (!this.#last || this.#ended) return;
+    this.#config = true;
+    const ts = Math.max(this.#lastTs + 1, Number(process.hrtime.bigint() / 1000n));
+    this.#lastTs = ts;
+    const picture = { ...this.#last, ts };
+    const waiting = this.#waiting.shift();
+    if (waiting) waiting.resolve(this.#frame(picture)); else this.#latest = picture;
+  }
+  video(): ScreenVideo { return { capture: this.#capture, encoder: "GStreamer JPEG (software)" }; }
 
-  async input(event: ScreenInput): Promise<void> {
+  input(event: ScreenInput): Promise<void> {
+    // Consecutive pointer, key and modifier events must reach the portal in the same order they arrived.
+    const next = this.#input.then(() => this.#post(event));
+    this.#input = next.catch(() => {});
+    return next;
+  }
+
+  async #post(event: ScreenInput): Promise<void> {
     if (event.t !== "key") return this.#send({ op: "input", event });
     const keycode = EVDEV[event.code];
     if (keycode === undefined) {
@@ -229,25 +262,29 @@ class PortalProcess implements ScreenView {
     for (const mod of temporary.reverse()) { await send(mod, "up"); this.#keys.delete(mod); }
   }
 
-  #end(error: Error, kill = true): void {
+  #end(error: Error, terminate = true): void {
     if (this.#ended) return;
     this.#ended = true;
+    if (error instanceof ScreenRefused) this.#failure = error;
     if (!this.#ready) this.#rejectReady(error);
     if (!this.#opened) this.#rejectFirst(error);
-    if (kill) this.#child.kill();
+    if (terminate) this.#child.kill();
+    const child = this.#child;
+    const kill = setTimeout(() => { if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL"); }, 2_000);
+    kill.unref();
     this.#latest = null;
-    for (const waiting of this.#waiting.splice(0)) waiting(null);
+    this.#last = null;
+    for (const waiting of this.#waiting.splice(0)) {
+      if (this.#failure) waiting.reject(this.#failure); else waiting.resolve(null);
+    }
     this.#gone();
   }
   close(): void {
     if (this.#ended) return;
     this.#normal = true;
-    // Let the helper release its virtual inputs and close the portal. A dialog that never answered cannot read the
-    // command yet, so bound the time for which that process may remain alive.
-    const timer = setTimeout(() => this.#child.kill("SIGKILL"), 2_000);
-    timer.unref();
-    this.#child.once("close", () => clearTimeout(timer));
-    this.#child.stdin.end('{"op":"close"}\n');
+    // A live helper can release its virtual keys and buttons before the portal session closes. An unanswered
+    // permission dialog cannot read this command, so #end still bounds the lifetime of the process.
+    if (!this.#child.stdin.destroyed && !this.#child.stdin.writableEnded) this.#child.stdin.end('{"op":"close"}\n');
     this.#end(new Error("desktop portal closed"), false);
   }
 }

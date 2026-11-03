@@ -1,139 +1,158 @@
 import assert from "node:assert/strict";
-import { watch } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { test } from "node:test";
+import { setTimeout as sleep } from "node:timers/promises";
 import { LinuxDesktop } from "../src/screens/linux-desktop.ts";
+import { LinuxGstDesktop } from "../src/screens/linux-portal.ts";
 import { ScreenRefused } from "../src/screens/hub.ts";
-import { WaylandDesktop } from "../src/screens/linux-portal.ts";
-import { graphicalSession } from "../src/screens/linux-session.ts";
+import { desktopEnvironment, graphicalSession } from "../src/screens/linux-session.ts";
 
-test("graphical session metadata identifies the station user's desktop", () => {
-  const properties = "User=123\nClass=user\nType=wayland\nActive=yes\nRemote=no\nDisplay=\n";
-  assert.deepEqual(graphicalSession("2", 123, properties), {
-    id: "2", uid: 123, type: "wayland", active: true, remote: false, display: undefined,
-  });
-  assert.equal(graphicalSession("2", 999, properties), null);
-  assert.equal(graphicalSession("2", 123, properties.replace("Class=user", "Class=greeter")), null);
-  assert.equal(graphicalSession("2", 123, properties.replace("Type=wayland", "Type=tty")), null);
-  assert.equal(graphicalSession("2", 123, properties.replace("Active=yes", "Active=no"))?.active, false);
+const python = "/usr/bin/python3";
+const options = { maxWidth: 400, maxHeight: 300, codecs: ["jpeg" as const] };
+
+// A portal process without a graphical session: it speaks the same framed protocol and records the commands it gets.
+// The real portal and PipeWire are also exercised on a disposable GNOME session in the integration check.
+const fixture = `
+import json, os, struct, sys, time
+def send(kind, data):
+    if isinstance(data, dict): data = json.dumps(data).encode()
+    sys.stdout.buffer.write(struct.pack(">BI", kind, len(data)) + data)
+    sys.stdout.buffer.flush()
+send(1, {"type": "consent"})
+while not os.path.exists(os.environ["SF_TEST_PORTAL_GO"]): time.sleep(0.01)
+if os.environ.get("SF_TEST_PORTAL_FAIL"):
+    send(1, {"type": "error", "message": "cancelled"})
+    sys.exit(1)
+send(1, {"type": "ready", "width": 800, "height": 600})
+for line in sys.stdin:
+    item = json.loads(line)
+    with open(os.environ["SF_TEST_PORTAL_LOG"], "a") as out: out.write(json.dumps(item) + "\\n")
+    if item.get("op") == "start":
+        send(1, {"type": "picture", "width": 400, "height": 300})
+        send(2, b"\\xff\\xd8A\\xff\\xd9")
+    elif item.get("op") == "input" and os.environ.get("SF_TEST_INPUT_ERROR"):
+        send(1, {"type": "input_error", "code": "textUnsupported"})
+`;
+
+test("a desktop portal asks once, keeps the pending grant, and carries frames and ordered input", { skip: !existsSync(python), timeout: 15_000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "stillfail-portal-"));
+  const helper = join(dir, "helper.py"), log = join(dir, "input.jsonl"), go = join(dir, "go");
+  await writeFile(helper, fixture);
+  const desktop = new LinuxGstDesktop({ python, helper, env: { ...process.env, SF_TEST_PORTAL_LOG: log, SF_TEST_PORTAL_GO: go }, consentWaitMs: 20, changed: () => {} });
+  t.after(async () => { await desktop.close(); await rm(dir, { recursive: true, force: true }); });
+  await desktop.refresh();
+  assert.equal(desktop.access().capture, true);
+  await assert.rejects(desktop.open(options), (error: unknown) => error instanceof ScreenRefused && error.key === "station.screen.linuxPortalConsent");
+  assert.equal(desktop.access().reason, "linuxPortalConsent");
+  await writeFile(go, "allow");
+  for (let attempt = 0; attempt < 250 && desktop.access().reason; attempt++) await sleep(20);
+  assert.deepEqual(desktop.size(), { width: 800, height: 600 });
+  const view = await desktop.open(options);
+  const frame = await view.next();
+  assert.ok(frame);
+  assert.deepEqual(frame.config, { codec: "jpeg", width: 400, height: 300 });
+  assert.deepEqual([...frame.data], [255, 216, 65, 255, 217]);
+  view.keyframe();
+  const repeated = await view.next();
+  assert.ok(repeated);
+  assert.deepEqual(repeated.config, frame.config);
+  assert.ok(repeated.ts > frame.ts);
+  await Promise.all([
+    view.input({ t: "pointer", kind: "move", x: 0.25, y: 0.5, buttons: 0 }),
+    view.input({ t: "key", kind: "down", key: "a", code: "KeyA", mods: 2 }),
+    view.input({ t: "key", kind: "up", key: "a", code: "KeyA", mods: 0 }),
+  ]);
+  let commands: any[] = [];
+  for (let attempt = 0; attempt < 60; attempt++) {
+    try { commands = (await readFile(log, "utf8")).trim().split("\n").map((line) => JSON.parse(line)); } catch {}
+    if (commands.length >= 6) break;
+    await sleep(20);
+  }
+  assert.equal(commands[0].op, "start");
+  assert.equal(commands[1].event.t, "pointer");
+  assert.deepEqual(commands.slice(2).map((command) => [command.event.keycode, command.event.kind]), [[29, "down"], [30, "down"], [29, "up"], [30, "up"]]);
+  view.close();
+  assert.equal(await view.next(), null);
 });
 
-test("the Linux desktop follows a change between Wayland and X11 sessions", async () => {
+test("a refused desktop portal reports a retryable failure", { skip: !existsSync(python), timeout: 10_000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "stillfail-portal-fail-"));
+  const helper = join(dir, "helper.py"), go = join(dir, "go");
+  await Promise.all([writeFile(helper, fixture), writeFile(go, "allow")]);
+  const desktop = new LinuxGstDesktop({ python, helper, env: { ...process.env, SF_TEST_PORTAL_FAIL: "1", SF_TEST_PORTAL_GO: go }, consentWaitMs: 5_000, changed: () => {} });
+  t.after(async () => { await desktop.close(); await rm(dir, { recursive: true, force: true }); });
+  await assert.rejects(desktop.open(options), (error: unknown) => error instanceof ScreenRefused && error.key === "station.screen.linuxPortalUnavailable");
+  assert.equal(desktop.access().reason, "linuxPortalUnavailable");
+});
+
+test("simultaneous portal openings prepare separate sessions", { skip: !existsSync(python), timeout: 10_000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "stillfail-portal-views-"));
+  const helper = join(dir, "helper.py"), go = join(dir, "go"), log = join(dir, "input.jsonl");
+  await Promise.all([writeFile(helper, fixture), writeFile(go, "allow")]);
+  const desktop = new LinuxGstDesktop({ python, helper, env: { ...process.env, SF_TEST_PORTAL_GO: go, SF_TEST_PORTAL_LOG: log }, consentWaitMs: 5_000, changed: () => {} });
+  t.after(async () => { await desktop.close(); await rm(dir, { recursive: true, force: true }); });
+  const [first, second] = await Promise.all([desktop.open(options), desktop.open(options)]);
+  assert.notEqual(first, second);
+  assert.deepEqual((await first.next())?.config, { codec: "jpeg", width: 400, height: 300 });
+  assert.deepEqual((await second.next())?.config, { codec: "jpeg", width: 400, height: 300 });
+  first.close();
+  second.close();
+});
+
+test("unsupported composed text ends the view with an actionable error", { skip: !existsSync(python), timeout: 10_000 }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "stillfail-portal-text-"));
+  const helper = join(dir, "helper.py"), go = join(dir, "go"), log = join(dir, "input.jsonl");
+  await Promise.all([writeFile(helper, fixture), writeFile(go, "allow")]);
+  const desktop = new LinuxGstDesktop({ python, helper, env: { ...process.env, SF_TEST_INPUT_ERROR: "1", SF_TEST_PORTAL_GO: go, SF_TEST_PORTAL_LOG: log }, consentWaitMs: 5_000, changed: () => {} });
+  t.after(async () => { await desktop.close(); await rm(dir, { recursive: true, force: true }); });
+  const view = await desktop.open(options);
+  assert.ok(await view.next());
+  const waiting = view.next();
+  await view.input({ t: "text", text: "你好" });
+  await assert.rejects(waiting, (error: unknown) => error instanceof ScreenRefused && error.key === "station.screen.linuxTextUnsupported");
+});
+
+test("logind discovery accepts only the station user's graphical sessions", () => {
+  const info = "User=1000\nType=wayland\nClass=user\nActive=yes\nRemote=no\nDisplay=\n";
+  assert.deepEqual(graphicalSession("7", 1000, info), { id: "7", uid: 1000, type: "wayland", active: true, remote: false, display: undefined });
+  assert.equal(graphicalSession("7", 1001, info), null);
+  assert.equal(graphicalSession("7", 1000, info.replace("Class=user", "Class=greeter")), null);
+  assert.equal(graphicalSession("7", 1000, info.replace("Type=wayland", "Type=tty")), null);
+});
+
+test("a station started outside the desktop uses the active session's environment", { skip: !process.getuid }, async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "stillfail-session-env-"));
+  t.after(async () => { await rm(dir, { recursive: true, force: true }); });
+  const uid = process.getuid!();
+  const loginctl = join(dir, "loginctl"), systemctl = join(dir, "systemctl");
+  const session = async (type: string, display: string) => writeFile(loginctl, `#!/bin/sh\nif [ "$1" = list-sessions ]; then\n  printf '7 ${uid} test seat0 tty2\\n'\nelse\n  printf 'User=${uid}\\nType=${type}\\nClass=user\\nActive=yes\\nRemote=no\\nDisplay=${display}\\n'\nfi\n`, { mode: 0o755 });
+  const base = { ...process.env, PATH: dir, HOME: dir, DISPLAY: ":old", XAUTHORITY: "/stale-auth", WAYLAND_DISPLAY: "wayland-old" };
+  await Promise.all([session("wayland", ""), writeFile(systemctl, "#!/bin/sh\nprintf 'WAYLAND_DISPLAY=wayland-9\\n'\n", { mode: 0o755 })]);
+  const wayland = await desktopEnvironment(base);
+  assert.equal(wayland.WAYLAND_DISPLAY, "wayland-9");
+  assert.equal(wayland.DISPLAY, undefined);
+  assert.equal(wayland.XAUTHORITY, undefined);
+  await Promise.all([session("x11", ":9"), writeFile(systemctl, "#!/bin/sh\nprintf 'DISPLAY=:9\\n'\n", { mode: 0o755 })]);
+  const x11 = await desktopEnvironment(base);
+  assert.equal(x11.DISPLAY, ":9");
+  assert.notEqual(x11.XAUTHORITY, "/stale-auth");
+  assert.equal(x11.WAYLAND_DISPLAY, undefined);
+});
+
+test("the Linux desktop switches between discovered graphical session types", async (t) => {
+  const dir = await mkdtemp(join(tmpdir(), "stillfail-desktop-session-"));
   let env: NodeJS.ProcessEnv = { XDG_SESSION_TYPE: "wayland", WAYLAND_DISPLAY: "wayland-0" };
-  let changes = 0;
-  const desktop = new LinuxDesktop({ data: tmpdir(), env: {}, discover: async () => env, changed: () => { changes++; } });
-  try {
-    await desktop.refresh(true);
-    assert.equal(desktop.access().capture, true);
-    env = { XDG_SESSION_TYPE: "x11" };
-    await desktop.refresh(true);
-    assert.equal(desktop.access().reason, "linuxNoDisplay");
-    assert.ok(changes >= 2);
-  } finally {
-    await desktop.close();
-  }
-});
-
-test("a portal view carries its first picture, input and close across the helper pipe", { skip: process.platform === "win32", timeout: 5_000 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "sf-portal-test-"));
-  const runner = join(dir, "runner");
-  await writeFile(runner, '#!/bin/sh\nshift\nexec "$STILLFAIL_TEST_NODE" "$@"\n', { mode: 0o700 });
-  const helper = fileURLToPath(new URL("./fixtures/portal-helper.mjs", import.meta.url));
-  let changes = 0;
-  const desktop = new WaylandDesktop({
-    changed: () => { changes++; },
-    env: { ...process.env, STILLFAIL_TEST_NODE: process.execPath, STILLFAIL_TEST_CLOSE_MARKER: join(dir, "closed") },
-    python: runner,
-    helper,
-  });
-  try {
-    await assert.rejects(desktop.open({ maxWidth: 640, maxHeight: 400, codecs: ["h264"] }), /JPEG/);
-    const view = await desktop.open({ maxWidth: 640, maxHeight: 400, codecs: ["jpeg"] });
-    assert.deepEqual(desktop.size(), { width: 1280, height: 800 });
-    const first = await view.next();
-    assert.ok(first);
-    assert.deepEqual(first.config, { codec: "jpeg", width: 640, height: 400 });
-    assert.deepEqual([...first.data], [0xff, 0xd8, 0xff, 0xd9]);
-    assert.equal(first.key, true);
-    assert.ok(changes > 0);
-
-    await view.input({ t: "pointer", kind: "move", x: 0.25, y: 0.5, buttons: 0 });
-    const pointer = await view.next();
-    assert.ok(pointer);
-    assert.deepEqual(JSON.parse(Buffer.from(pointer.data).toString()), { t: "pointer", kind: "move", x: 0.25, y: 0.5, buttons: 0 });
-    assert.ok(pointer.ts > first.ts);
-
-    await view.input({ t: "key", kind: "down", code: "KeyA", key: "a", mods: 0 });
-    const key = await view.next();
-    assert.ok(key);
-    assert.deepEqual(JSON.parse(Buffer.from(key.data).toString()), { t: "key", keycode: 30, kind: "down" });
-
-    const pending = view.next();
-    let sawClose!: () => void;
-    const closed = new Promise<void>((resolve) => { sawClose = resolve; });
-    const watcher = watch(dir, (_event, name) => { if (name === "closed") sawClose(); });
-    t.after(() => watcher.close());
-    view.close();
-    assert.equal(await pending, null);
-    await closed;
-    watcher.close();
-  } finally {
-    await desktop.close();
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("simultaneous portal openings get separate sessions", { skip: process.platform === "win32", timeout: 5_000 }, async () => {
-  const dir = await mkdtemp(join(tmpdir(), "sf-portal-concurrent-"));
-  const runner = join(dir, "runner");
-  await writeFile(runner, '#!/bin/sh\nshift\nexec "$STILLFAIL_TEST_NODE" "$@"\n', { mode: 0o700 });
-  const helper = fileURLToPath(new URL("./fixtures/portal-helper.mjs", import.meta.url));
-  const desktop = new WaylandDesktop({ changed: () => {}, env: { ...process.env, STILLFAIL_TEST_NODE: process.execPath }, python: runner, helper });
-  try {
-    const options = { maxWidth: 640, maxHeight: 400, codecs: ["jpeg" as const] };
-    const [first, second] = await Promise.all([desktop.open(options), desktop.open(options)]);
-    assert.notEqual(first, second);
-    assert.deepEqual((await first.next())?.config, { codec: "jpeg", width: 640, height: 400 });
-    assert.deepEqual((await second.next())?.config, { codec: "jpeg", width: 640, height: 400 });
-    first.close();
-    second.close();
-  } finally {
-    await desktop.close();
-    await rm(dir, { recursive: true, force: true });
-  }
-});
-
-test("an unanswered portal dialog stays pending until the desktop is closed", { skip: process.platform === "win32", timeout: 5_000 }, async (t) => {
-  const dir = await mkdtemp(join(tmpdir(), "sf-portal-consent-"));
-  const runner = join(dir, "runner");
-  await writeFile(runner, '#!/bin/sh\nshift\nexec "$STILLFAIL_TEST_NODE" "$@"\n', { mode: 0o700 });
-  const helper = fileURLToPath(new URL("./fixtures/portal-helper.mjs", import.meta.url));
-  const desktop = new WaylandDesktop({
-    changed: () => {},
-    env: { ...process.env, STILLFAIL_TEST_NODE: process.execPath, STILLFAIL_TEST_HOLD_CONSENT: "1", STILLFAIL_TEST_CLOSE_MARKER: join(dir, "closed") },
-    python: runner,
-    helper,
-    consentWaitMs: 200,
-  });
-  let sawClose!: () => void;
-  const closed = new Promise<void>((resolve) => { sawClose = resolve; });
-  const watcher = watch(dir, (_event, name) => { if (name === "closed") sawClose(); });
-  t.after(() => watcher.close());
-  try {
-    await assert.rejects(desktop.open({ maxWidth: 640, maxHeight: 400, codecs: ["jpeg"] }), (error: unknown) => {
-      assert.ok(error instanceof ScreenRefused);
-      assert.equal(error.key, "station.screen.linuxPortalConsent");
-      assert.equal(error.access?.asking, true);
-      return true;
-    });
-    assert.equal(desktop.access().asking, true);
-  } finally {
-    await desktop.close();
-    await closed;
-    watcher.close();
-    await rm(dir, { recursive: true, force: true });
-  }
+  const desktop = new LinuxDesktop({ data: dir, env: {}, discover: async () => env, changed: () => {} });
+  t.after(async () => { await desktop.close(); await rm(dir, { recursive: true, force: true }); });
+  await desktop.refresh(true);
+  assert.equal(desktop.access().capture, true);
+  env = { XDG_SESSION_TYPE: "x11" };
+  await desktop.refresh(true);
+  assert.equal(desktop.access().reason, "linuxNoDisplay");
+  env = { XDG_SESSION_TYPE: "x11", DISPLAY: ":65535", PATH: "" };
+  await desktop.refresh(true);
+  assert.equal(desktop.access().capture, true); // No APT or X11 tools: the GStreamer/XTest fallback is selected.
 });
