@@ -1,0 +1,30 @@
+name: Settings title screen regression
+on:
+  push:
+    branches: [ci/maintain-3427-cold-cache-20261103]
+permissions:
+  contents: read
+jobs:
+  screens:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      MBC_STORE: ${{ github.workspace }}/apps/mbui/_build/native/release/mbc-store
+      MBC_JOBS: 2
+      CSPLIT_JOBS: 2
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - uses: actions/cache/restore@v4
+        with:
+          path: ${{ env.MBC_STORE }}
+          key: mbui-linux-store-app-sfapp-b-screen-final
+          restore-keys: mbui-linux-store-app-sfapp-b-
+      - name: Run all recorded screen cases
+        run: LINES_OUT=150 bash apps/mbui/scripts/screens.sh test
