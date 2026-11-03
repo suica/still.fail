@@ -28,6 +28,8 @@ jobs:
             mkdir -p /run/dbus
             dbus-daemon --system --fork --nopidfile
             useradd -m sf
+            /usr/lib/systemd/systemd-logind >/test/logind.log 2>&1 &
+            sleep 2
             cp /src/station/src/screens/linux-portal.py /test/linux-portal.py
             cp /src/.ci-scratch/wayland-input-target.py /test/wayland-input-target.py
             cp /src/.ci-scratch/centos-gnome-portal.sh /test/centos-gnome-portal.sh
