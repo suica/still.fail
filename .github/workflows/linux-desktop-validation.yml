@@ -1,0 +1,36 @@
+name: Linux desktop distribution check
+on:
+  push:
+    branches: [ci/linux-desktop-centos]
+permissions:
+  contents: read
+jobs:
+  centos:
+    strategy:
+      fail-fast: false
+      matrix:
+        stream: ['9', '10']
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - name: Install an isolated X server on the runner
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y xvfb
+          sudo mkdir -p /tmp/.X11-unix
+          sudo chmod 1777 /tmp/.X11-unix
+      - name: Start CentOS Stream
+        run: docker run -d --name sf-centos -v "$GITHUB_WORKSPACE:/src:ro" -v /tmp/.X11-unix:/tmp/.X11-unix "quay.io/centos/centos:stream${{ matrix.stream }}" sleep infinity
+      - name: Install standard desktop components
+        run: |
+          docker exec sf-centos dnf -y install python3 python3-gobject gtk3 gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good libX11 libXtst
+      - name: Capture and drive an isolated X11 desktop as a user
+        run: |
+          Xvfb :99 -ac -nolisten tcp -screen 0 800x600x24 >/tmp/xvfb.log 2>&1 & server=$!
+          trap 'kill "$server" 2>/dev/null || true' EXIT
+          sleep 2
+          kill -0 "$server"
+          docker exec -u 1001:1001 -e HOME=/tmp -e DISPLAY=:99 -e XDG_SESSION_TYPE=x11 sf-centos bash -c 'cd /src/station && python3 test/linux-x11-gstreamer.py'
