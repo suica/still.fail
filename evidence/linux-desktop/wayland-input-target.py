@@ -1,0 +1,27 @@
+import sys
+import gi
+gi.require_version('Gtk', '3.0')
+gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk
+
+window = Gtk.Window(title='still.fail portal input test')
+window.set_decorated(False)
+window.set_default_size(800, 600)
+box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+entry = Gtk.Entry()
+entry.set_placeholder_text('Remote keyboard test')
+button = Gtk.Button(label='Remote pointer test')
+box.pack_start(entry, True, True, 0)
+box.pack_start(button, True, True, 0)
+window.add(box)
+entry.connect('changed', lambda value: print('text:' + value.get_text(), flush=True))
+entry.connect('button-press-event', lambda *_: print('entry-pressed', flush=True))
+button.connect('clicked', lambda *_: print('clicked', flush=True))
+button.connect('button-release-event', lambda *_: print('button-up', flush=True))
+window.connect('key-press-event', lambda _, event: print('key-down:' + Gdk.keyval_name(event.keyval), flush=True))
+window.connect('key-release-event', lambda _, event: print('key-up:' + Gdk.keyval_name(event.keyval), flush=True))
+window.connect('map-event', lambda *_: print('ready', flush=True))
+window.connect('destroy', Gtk.main_quit)
+window.show_all()
+window.fullscreen()
+Gtk.main()
