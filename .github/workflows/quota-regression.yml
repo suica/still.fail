@@ -1,0 +1,30 @@
+name: quota-regression
+on:
+  push:
+    branches: [codex/ci-fix-quota-reset-auth-sync]
+permissions:
+  contents: read
+jobs:
+  station:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@10.33.0
+      - name: Install station dependencies
+        working-directory: station
+        run: pnpm install --frozen-lockfile
+      - name: Check and build station
+        working-directory: station
+        run: |
+          pnpm check
+          pnpm build
+      - name: Station account and session regression
+        working-directory: station
+        run: node ../scripts/native.ts run mesh runner -- node --import ./test/setup-env.mjs --test --test-timeout=120000 test/hub.test.ts test/codex.test.ts test/pool-shared-account.test.ts test/accounts-routes.test.ts test/share.test.ts test/sandbox.test.ts
+      - name: Store ordering and query plans
+        working-directory: station
+        run: node ../scripts/native.ts run mesh runner -- node --import ./test/setup-env.mjs --test --test-timeout=30000 --test-name-pattern='latest turn is the last inserted|what the station asks again and again is planned|what is told as chats change is planned' test/store.test.ts
