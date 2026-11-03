@@ -1,0 +1,11 @@
+--- a/apps/mbui/src/sfapp/settings/fixture.mbt
++++ b/apps/mbui/src/sfapp/settings/fixture.mbt
+@@ -806,7 +806,7 @@
+       ("stationName", str(text(v, "stationName"))), ("profileId", str(if pending { "" } else { text(v, "profileId") })),
+       ("online", Json::boolean(!offline)), ("usable", Json::boolean(!offline && !unavailable && !pending)),
+       ("sourceName", str(if unavailable || pending { "Studio" } else { "" })),
+-      ("state", if pending { obj([("text", str("等待同步")), ("tone", str("neutral"))]) } else { Json::null() }),
++      ("state", obj([("text", str("额度查询失败")), ("tone", str("amber"))])),
+     ])
+   })
+ }
