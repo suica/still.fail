@@ -3,11 +3,12 @@ set -eu
 export TEST_ROOT=/test/run
 mkdir -p "$TEST_ROOT/runtime" "$TEST_ROOT/config" "$TEST_ROOT/cache" "$TEST_ROOT/data"
 chmod 700 "$TEST_ROOT/runtime"
-export XDG_RUNTIME_DIR="$TEST_ROOT/runtime" XDG_CURRENT_DESKTOP=GNOME GSETTINGS_BACKEND=memory
+export XDG_RUNTIME_DIR="$TEST_ROOT/runtime" XDG_CURRENT_DESKTOP=GNOME
 export XDG_CONFIG_HOME="$TEST_ROOT/config" XDG_CACHE_HOME="$TEST_ROOT/cache" XDG_DATA_HOME="$TEST_ROOT/data"
 export XDG_SESSION_TYPE=wayland WAYLAND_DISPLAY=sf-test-wayland LIBGL_ALWAYS_SOFTWARE=1
 dbus-run-session -- bash -c '
 set -eu
+gsettings set org.gnome.shell welcome-dialog-last-shown-version 99.0
 pipewire >"$TEST_ROOT/pipewire.log" 2>&1 & pp=$!
 wireplumber >"$TEST_ROOT/media-session.log" 2>&1 & mp=$!
 gnome-shell --nested --wayland --wayland-display=sf-test-wayland --no-x11 >"$TEST_ROOT/shell.log" 2>&1 & gp=$!
