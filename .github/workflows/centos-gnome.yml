@@ -1,0 +1,57 @@
+name: CentOS GNOME Wayland validation
+on:
+  push:
+    branches: [ci/centos-gnome-20261103]
+permissions:
+  contents: read
+jobs:
+  centos-gnome:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install isolated display tools
+        run: sudo apt-get update -qq && sudo apt-get install -y xvfb xdotool ffmpeg
+      - name: Run CentOS GNOME Wayland session
+        shell: bash
+        run: |
+          set -eu
+          testdir="$RUNNER_TEMP/centos-gnome"
+          mkdir -p "$testdir"
+          chmod 777 "$testdir"
+          Xvfb -displayfd 3 -screen 0 1024x768x24 -ac 3>"$testdir/display" >"$testdir/xvfb.log" 2>&1 & xp=$!
+          trap 'kill "$xp" 2>/dev/null || true' EXIT
+          for i in $(seq 1 50); do [ -s "$testdir/display" ] && break; kill -0 "$xp"; sleep 0.1; done
+          export DISPLAY=":$(cat "$testdir/display")"
+          docker run --rm --shm-size=512m -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix -v "$GITHUB_WORKSPACE:/src:ro" -v "$testdir:/test" quay.io/centos/centos:stream9 bash -euxc '
+            dnf -y install gnome-shell xorg-x11-server-Xwayland python3-gobject gtk3 pipewire pipewire-gstreamer gstreamer1-plugins-base gstreamer1-plugins-good xdg-desktop-portal-gnome wireplumber dbus-daemon mesa-dri-drivers shadow-utils
+            useradd -m sf
+            cp /src/station/src/screens/linux-portal.py /test/linux-portal.py
+            cp /src/.ci-scratch/wayland-input-target.py /test/wayland-input-target.py
+            cp /src/.ci-scratch/centos-gnome-portal.sh /test/centos-gnome-portal.sh
+            chown -R sf:sf /test
+            runuser -u sf -- bash /test/centos-gnome-portal.sh
+          ' >"$testdir/container.log" 2>&1 & dp=$!
+          for i in $(seq 1 600); do [ -e "$testdir/consent-requested" ] && break; kill -0 "$dp" || break; sleep 1; done
+          if [ -e "$testdir/consent-requested" ]; then
+            sleep 8
+            ffmpeg -hide_banner -loglevel error -y -f x11grab -video_size 1024x768 -i "$DISPLAY" -frames:v 1 -threads 1 "$testdir/before.png" || true
+            xdotool mousemove --sync 593 388 click 1
+            sleep 1
+            xdotool click 1
+            sleep 2
+            ffmpeg -hide_banner -loglevel error -y -f x11grab -video_size 1024x768 -i "$DISPLAY" -frames:v 1 -threads 1 "$testdir/after.png" || true
+            xdotool mousemove --sync 612 188 click 1
+          fi
+          result=0
+          wait "$dp" || result=$?
+          cat "$testdir/container.log"
+          if [ "$result" -ne 0 ]; then
+            for file in "$testdir"/run/*.log; do [ ! -f "$file" ] || { printf '\n--- %s ---\n' "$file"; tail -100 "$file"; }; done
+          fi
+          exit "$result"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: centos-gnome-diagnostics
+          path: ${{ runner.temp }}/centos-gnome
