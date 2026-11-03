@@ -25,6 +25,8 @@ jobs:
           export DISPLAY=":$(cat "$testdir/display")"
           docker run --rm --shm-size=512m -e DISPLAY -v /tmp/.X11-unix:/tmp/.X11-unix -v "$GITHUB_WORKSPACE:/src:ro" -v "$testdir:/test" quay.io/centos/centos:stream9 bash -euxc '
             dnf -y install gnome-shell xorg-x11-server-Xwayland python3-gobject gtk3 pipewire pipewire-gstreamer gstreamer1-plugins-base gstreamer1-plugins-good xdg-desktop-portal-gnome wireplumber dbus-daemon mesa-dri-drivers shadow-utils
+            mkdir -p /run/dbus
+            dbus-daemon --system --fork --nopidfile
             useradd -m sf
             cp /src/station/src/screens/linux-portal.py /test/linux-portal.py
             cp /src/.ci-scratch/wayland-input-target.py /test/wayland-input-target.py
@@ -54,4 +56,7 @@ jobs:
         if: always()
         with:
           name: centos-gnome-diagnostics
-          path: ${{ runner.temp }}/centos-gnome
+          path: |
+            ${{ runner.temp }}/centos-gnome/*.png
+            ${{ runner.temp }}/centos-gnome/*.log
+            ${{ runner.temp }}/centos-gnome/run/*.log
