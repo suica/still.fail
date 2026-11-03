@@ -802,11 +802,12 @@ fn profile_stations(c : @ui.Ctx, core : Core, here_station : String, entry : Jso
         let pid = text(mv, "profileId")
         let state = field(mv, "state")
         let current = station == here_station
+        let opens = !current && pid != ""
         if @sf.link_row(
             c,
             "profile-station/" + station,
             text(mv, "stationName"),
-            goes=!current && pid != "",
+            goes=opens,
             title_after=fn() {
               if current { @sf.pill(c, @sf.t("web-pages.connect.current")) }
             },
@@ -819,6 +820,11 @@ fn profile_stations(c : @ui.Ctx, core : Core, here_station : String, entry : Jso
                 @sf.pill(c, @sf.t("web-pages.settings.profiles.hostAway", args=[("station", text(mv, "sourceName"))]), tone=Red)
               } else if text(state, "text") != "" {
                 @sf.pill(c, text(state, "text"), tone=pill_tone(text(state, "tone")))
+              }
+              // The status shares a column with the other rows even where this row has no destination.
+              if !opens {
+                let side = if @sf.look() is Narrow { @sf.pg_chevron } else { @sf.desk_chevron }
+                c.box(style=@ui.style(w=Fixed(side), h=Fixed(side)), fn() {  }) |> ignore
               }
             },
           ) {
