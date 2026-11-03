@@ -1,0 +1,76 @@
+name: GPU feature verification
+on:
+  push:
+    branches: [ci/maintain-3437-20261103]
+
+jobs:
+  moon-cache:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - name: Put MoonBit in this fork's Actions cache
+        shell: bash
+        run: |
+          export MOON_HOME="$RUNNER_TOOL_CACHE/moon-ci"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+      - uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.tool_cache }}/moon-ci
+          key: moonbit-Linux-X64-github-hosted-gpu-verification
+  typescript:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - name: Station types and GPU tests
+        working-directory: station
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+          node --test --test-force-exit test/load.test.ts test/linux-gpu.test.ts
+          node --test --test-force-exit --test-name-pattern='no code outside src/platform' test/platform.test.ts
+      - name: Core types, presentation, localization and generated shapes
+        run: |
+          node client/core-ts/scripts/shapes.ts --check
+          cd client/core-ts
+          pnpm install --frozen-lockfile
+          pnpm check
+          node --test --test-force-exit test/present.test.ts test/catalog.test.ts
+  app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [pkgs, '1/4', '2/4', '3/4', '4/4', contrast, replay]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: App checks
+        if: matrix.part == 'pkgs'
+        run: bash apps/mbui/scripts/check.sh
+      - name: App tests
+        shell: bash
+        env:
+          GPU_TEST_PART: ${{ matrix.part }}
+          MBC_JOBS: 2
+          TARGETS: native
+          TIMES: 1
+        run: |
+          if [ "$GPU_TEST_PART" = replay ]; then
+            PARTS=replay REPLAY_SHARDS=3 LINES_OUT=1000 bash apps/mbui/scripts/test.sh
+          else
+            PARTS=app APP_GROUP="$GPU_TEST_PART" SFAPP_SHARDS=4 bash apps/mbui/scripts/test.sh
+          fi
