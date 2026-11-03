@@ -1,0 +1,40 @@
+name: Workspace mark maintenance validation
+on:
+  push:
+    branches: [ci/maintain-3455-fixed-20261103]
+permissions:
+  contents: read
+jobs:
+  app:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        file: [accounts_wbtest.mbt, notifications_wbtest.mbt, station_page_wbtest.mbt]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          export MOON_HOME="$RUNNER_TEMP/moon"
+          curl -fsSL --retry 3 --retry-all-errors https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
+          echo "MOON_HOME=$MOON_HOME" >> "$GITHUB_ENV"
+      - name: Exercise workspace setting rows
+        shell: bash
+        env:
+          TEST_FILE: ${{ matrix.file }}
+          MBC_JOBS: 2
+          CSPLIT_JOBS: 2
+        run: |
+          set +e
+          set -uo pipefail
+          cd apps/mbui
+          . scripts/env.sh
+          native_tests "$PWD"
+          moon test $NATIVE -p stillfail/sfpages --file "$TEST_FILE" > "$RUNNER_TEMP/moon-test.log" 2>&1
+          result=$?
+          tail -c 20000 "$RUNNER_TEMP/moon-test.log" || true
+          echo "moon test exit: $result"
+          exit "$result"
