@@ -48,7 +48,7 @@ pub fn screen_fix_others(others : Array[String]) -> Unit {
 ///|
 /// The fixture's screen, as Android's test has it.
 // kept across runs: a value (no field of it changes)
-let screen_fix_at : ScreenAt = { station: "ws-1/st-1", screen: "browser:tab-1", title: "Chrome", until_gone: false }
+let screen_fix_at : ScreenAt = { station: "ws-1/st-1", screen: "desktop", title: "Linux 桌面", until_gone: false }
 
 ///|
 /// MBUI_FIXTURE=screen-…: the screen's viewer over the chats.
@@ -216,6 +216,10 @@ pub fn screen_fixture_stream(
     }
     "screen-outdated" => over("outdated", "这台 station 的版本还不能共享屏幕，更新后再试", None)
     "screen-gone" => over("gone", "这个标签页已经关了", None)
+    "screen-portal-before" =>
+      over("denied", "无法连接 Wayland 桌面。请确认桌面已登录，并安装桌面 portal、PipeWire、Python GI 和 GStreamer 的 PipeWire/JPEG 组件。", Some({ "capture": false, "control": false, "message": "无法连接 Wayland 桌面。请确认桌面已登录，并安装桌面 portal、PipeWire、Python GI 和 GStreamer 的 PipeWire/JPEG 组件。" }))
+    "screen-portal-after" =>
+      over("denied", "无法连接 Wayland 桌面。请确认桌面已登录，并安装桌面 portal、PipeWire、Python GI 和 GStreamer 的 PipeWire/JPEG 组件。", Some({ "capture": false, "control": false, "message": "无法连接 Wayland 桌面。请确认桌面已登录，并安装桌面 portal、PipeWire、Python GI 和 GStreamer 的 PipeWire/JPEG 组件。", "help": "linux-desktop" }))
     "screen-denied" =>
       over(
         "denied",
@@ -314,8 +318,8 @@ fn screen_fix_state(
 ) -> Json {
   let m : Map[String, Json] = {
     "phase": Json::string(phase),
-    "title": Json::string("still.fail — Chrome"),
-    "kind": Json::string("browser"),
+    "title": Json::string("Linux 桌面"),
+    "kind": Json::string("desktop"),
     "control": Json::boolean(control),
     "may": Json::boolean(may),
     "others": Json::array(others.map(Json::string)),

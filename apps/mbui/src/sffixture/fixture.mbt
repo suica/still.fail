@@ -668,6 +668,7 @@ fn fixture_answer(f : Fixture, name : String, params : Map[String, Json], versio
   // a station's network as the core gives it: how this device reaches it (`way`) in the list, its figures in the
   // `stationNet` view of its own (the made-up stations say both as `net`)
   let value = match name {
+    "stations" if f.mode == "screen-portal-before" || f.mode == "screen-portal-after" => Some(Json::array([Json::object({ "station": Json::string("ws-1/st-1"), "host": Json::object({ "os": Json::string("Linux 6.8") }) })]))
     // (files-reading: the stations with a drive not read yet, the files' sidebar waiting on them)
     "stations" if params.get("drive") is Some(True) && f.mode == "files-reading" => None
     "stations" if params.get("drive") is Some(True) =>
