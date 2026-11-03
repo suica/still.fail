@@ -1,0 +1,22 @@
+name: Linux Wayland station validation
+on:
+  push:
+    branches: [ci/linux-wayland-desktops-20261103]
+permissions:
+  contents: read
+jobs:
+  station:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .node-version, package-manager-cache: false }
+      - run: npm install -g pnpm@10.33.0
+      - run: pnpm --dir station install --frozen-lockfile
+      - run: pnpm --dir station check
+      - name: Portal protocol and X11 regressions
+        working-directory: station
+        run: node --import ./test/setup-env.mjs --test test/linux-portal.test.ts test/x11-desktop.test.ts test/linux-screen-tools.test.ts
+      - name: Check helper syntax
+        run: PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m py_compile station/src/screens/linux-portal.py
