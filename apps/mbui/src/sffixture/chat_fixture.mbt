@@ -1408,10 +1408,26 @@ pub fn ask_end_post() -> Json {
 }
 
 ///|
+/// A text card at the chat's end. Its value is an ordinary reply, not a secret.
+fn text_card_post(with_hint : Bool) -> Json {
+  let card : Map[String, Json] = { "type": "text", "assigneeText": "待你决策" }
+  if with_hint {
+    card["placeholder"] = "例如 example.com"
+  }
+  msg(64, "agent", by_agent("Anthropic", "claude", "s-c1"), "新网站要用哪个域名？", "刚刚", {
+    "card": Json::object(card),
+    "decision": fix_decided.get(64).unwrap_or({ "resolved": false }),
+    "asked": Json::boolean(!fix_decided.contains(64)),
+    "createdAt": Json::number(1.0e9),
+  })
+}
+
+///|
 /// The chat `v` with what was answered here in it.
 pub fn with_cards(f : Fixture, v : Json, session : String) -> Json {
   let seeded = f.mode == "chat-cards"
   let ask_end = f.mode == "chat-ask-end"
+  let text_card = f.mode.has_prefix("chat-text-card")
   // (chat-locked: its card's first option closes it, and its agent is in a turn till fix_turn_over)
   let locked = f.mode == "chat-locked"
   let vault = f.mode == "chat-vault" || f.mode == "chat-vault-typed" || f.mode == "chat-vault-file" || f.mode == "chat-vault-use" || f.mode == "chat-vault-timeout" || f.mode == "chat-vault-before"
@@ -1434,7 +1450,7 @@ pub fn with_cards(f : Fixture, v : Json, session : String) -> Json {
       None => rest
     }
   }
-  if session != "s-c1" || (fix_decided.is_empty() && !seeded && !vault && !phone && !signin && !ask_end && !locked) {
+  if session != "s-c1" || (fix_decided.is_empty() && !seeded && !vault && !phone && !signin && !ask_end && !text_card && !locked) {
     return v
   }
   match v {
@@ -1503,6 +1519,12 @@ pub fn with_cards(f : Fixture, v : Json, session : String) -> Json {
       if ask_end {
         all.push(ask_end_post())
       }
+      if text_card {
+        all.push(text_card_post(f.mode != "chat-text-card-default"))
+      }
+      if f.mode == "chat-text-card-offline" {
+        o["offline"] = Json::boolean(true)
+      }
       // each answer's message, after the rest
       for seq, label in fix_replied {
         all.push(
@@ -1538,6 +1560,16 @@ pub fn fixture_card_call(f : Fixture, name : String, params : Json) -> Result[Js
   let p = Some(params)
   let seq = number(p, "seq").to_int()
   match name {
+    "decision.reply" => {
+      let words = text(p, "text")
+      if words.contains("失败") {
+        return Some(Err({ "code": "unavailable", "message": "Studio 没有回应" }))
+      }
+      fix_decided[seq] = { "resolved": true, "answeredBy": "你", "text": "你 回复了" }
+      fix_replied[seq] = words
+      f.changed()
+      Some(Ok(Json::object({})))
+    }
     "decision.answer" => {
       let label = text(p, "option")
       if label.contains("失败") {
