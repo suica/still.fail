@@ -44,6 +44,9 @@ jobs:
             sleep 1
             xdotool mousemove --sync 400 260 click 1
             sleep 1
+            xdotool mousemove --sync 400 412 click 1
+            xdotool mousemove --sync 400 460 click 1
+            sleep 1
             ffmpeg -hide_banner -loglevel error -y -f x11grab -video_size 1024x768 -i "$DISPLAY" -frames:v 1 -threads 1 "$testdir/after.png" || true
             xdotool mousemove --sync 610 138 click 1
           fi
