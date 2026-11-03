@@ -25,6 +25,7 @@ gi.require_version("Gtk", "3.0")
 from gi.repository import Gtk
 events = open(os.environ["SF_X11_TEST_LOG"], "w", buffering=1)
 window = Gtk.Window(title="still.fail X11 integration test")
+window.connect("map-event", lambda *_args: events.write("ready\n") and False)
 window.set_default_size(800, 600)
 box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
 box.set_halign(Gtk.Align.CENTER)
@@ -83,7 +84,7 @@ def run():
         threading.Thread(target=read_frames, daemon=True).start()
         try:
             assert wait_for(lambda: any(message.get("type") == "ready" for message in messages)), messages
-            time.sleep(1)  # The test window must be mapped before it can receive input.
+            assert wait_for(lambda: log.exists() and "ready\n" in log.read_text()), "target window did not map"
             send({"op": "start", "maxWidth": 800, "maxHeight": 600, "fps": 10})
             assert wait_for(lambda: last_jpeg[0] is not None), messages
             for event in [
@@ -111,6 +112,9 @@ def run():
             assert result and result.type == Gst.MessageType.EOS, "the captured JPEG did not decode"
             print("X11 JPEG, pointer, keyboard and Unicode input passed")
         finally:
+            subprocess.run(["xwininfo", "-root", "-tree"], check=False)
+            subprocess.run(["xdotool", "getmouselocation"], check=False)
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "x11grab", "-video_size", "800x600", "-i", os.environ["DISPLAY"], "-frames:v", "1", "-threads", "1", "/tmp/sf-x11-ci.png"], check=False)
             helper.terminate()
             target.terminate()
             for process in (helper, target):
@@ -122,7 +126,7 @@ def run():
             errors = helper.stderr.read().decode(errors="replace")
             if errors:
                 print(errors[-3000:], file=sys.stderr)
-            if target.returncode and target.returncode > 0:
+            if target.returncode:
                 print(target.stderr.read().decode(errors="replace")[-1000:], file=sys.stderr)
 
 

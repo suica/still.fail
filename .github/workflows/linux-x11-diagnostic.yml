@@ -1,0 +1,17 @@
+name: Linux X11 diagnostic
+on:
+  push:
+    branches: [ci/linux-desktop-ubuntu-diag]
+permissions: {contents: read}
+jobs:
+  x11:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - run: sudo apt-get update -qq && sudo apt-get install -y xvfb xauth xdotool x11-utils ffmpeg python3-gi gir1.2-gtk-3.0 gir1.2-gstreamer-1.0 gstreamer1.0-plugins-base gstreamer1.0-plugins-good libxtst6
+      - run: xvfb-run -a -s '-screen 0 800x600x24' /usr/bin/python3 test/linux-x11-gstreamer.py
+        working-directory: station
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with: {name: linux-x11-diagnostic, path: /tmp/sf-x11-ci.png}
