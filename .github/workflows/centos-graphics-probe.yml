@@ -1,0 +1,19 @@
+name: CentOS Wayland graphics environment
+on:
+  push:
+    branches: [ci/centos-graphics-probe-20261103]
+permissions:
+  contents: read
+jobs:
+  centos-graphics:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Probe CentOS desktop test packages
+        run: |
+          docker run --rm quay.io/centos/centos:stream9 bash -euxc '
+            for package in gnome-shell xorg-x11-server-Xvnc xorg-x11-server-Xwayland xdotool python3-gobject gtk3 pipewire pipewire-gstreamer gstreamer1-plugins-base gstreamer1-plugins-good xdg-desktop-portal-gnome wireplumber dbus-daemon mesa-dri-drivers; do
+              printf "PACKAGE %s\n" "$package"
+              dnf -q repoquery --available --qf "%{name}" "$package" | sort -u
+            done
+          '
