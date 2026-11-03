@@ -355,8 +355,8 @@ GStreamer to capture a selected monitor as JPEG and send pointer and keyboard ev
 allow screen sharing and remote interaction in the system dialog; the desktop may ask again for a later session.
 The portal backend and its Python GI and GStreamer components must be installed. A Wayland Xwayland-only screenshot
 would omit native windows, so it is not used as an entire desktop. Committed text uses the focused accessible text
-field. If an application such as a terminal does not expose one, the helper can instead send keys when GDK 3 can map
-every character unambiguously in the desktop's keyboard layout. If it cannot do so, or the accessible field has a
+field. For a focused terminal that does not expose one, the helper can instead send keys when GDK 3 can map every
+character unambiguously in the desktop's keyboard layout and lock state. If it cannot do so, or the accessible field has a
 selection, the view reports that it cannot safely insert the text. A web page may also be opened through the browser
 source. The GNOME Wayland path has been exercised on
 Ubuntu 22.04; other desktops and versions need their own portal implementation and validation.

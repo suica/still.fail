@@ -66,6 +66,10 @@ def insert_focused_text(value, stopped):
                 state = element.get_state_set()
                 if state and state.contains(Atspi.StateType.FOCUSED):
                     try:
+                        # Terminal widgets accept keys rather than editable text operations. Restrict the fallback
+                        # to a positively identified terminal so an inaccessible selection is never overwritten.
+                        if element.get_role() == Atspi.Role.TERMINAL:
+                            return "unavailable"
                         editable = element.get_editable_text_iface()
                         text = element.get_text_iface()
                         if editable and text:
@@ -88,8 +92,6 @@ def insert_focused_text(value, stopped):
                             except GLib.Error:
                                 pass
                             return "inserted"
-                        if element.get_role() == Atspi.Role.TERMINAL:
-                            return "unavailable"
                     except (GLib.Error, AttributeError):
                         pass
                 count = min(200, element.get_child_count())
@@ -98,7 +100,7 @@ def insert_focused_text(value, stopped):
                 pass
     except (ImportError, ValueError, GLib.Error):
         pass
-    return "unavailable"
+    return "unsafe"
 
 
 class Portal:
