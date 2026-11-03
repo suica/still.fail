@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 83ef3f415ee2b110d0c9084f6be8bf73b5daac84
+          ref: d0a608bfe2ddf1b365c4d3f923d9416696517596
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -33,4 +33,29 @@ jobs:
           export MBC_JOBS=2
           export MBC_REAL_CC=clang
           moon test $NATIVE -p stillfail/sfapp --file cards_wbtest.mbt
+  protocol:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: d0a608bfe2ddf1b365c4d3f923d9416696517596
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.33.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Check and test client core
+        working-directory: client/core-ts
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+          node --test test/decisions.test.ts test/vault.test.ts
+      - name: Check and test station
+        working-directory: station
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm check
+          STILLFAIL_NATIVE=fetch node ../scripts/native.ts run mesh runner -- node --import ./test/setup-env.mjs --test test/hub-tools.test.ts test/slack.test.ts test/feishu.test.ts test/vault-save.test.ts
 
