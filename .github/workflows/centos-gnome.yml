@@ -42,16 +42,17 @@ jobs:
             ffmpeg -hide_banner -loglevel error -y -f x11grab -video_size 1024x768 -i "$DISPLAY" -frames:v 1 -threads 1 "$testdir/before.png" || true
             xdotool mousemove --sync 593 388 click 1
             sleep 1
-            xdotool click 1
-            sleep 2
+            xdotool mousemove --sync 400 260 click 1
+            sleep 1
             ffmpeg -hide_banner -loglevel error -y -f x11grab -video_size 1024x768 -i "$DISPLAY" -frames:v 1 -threads 1 "$testdir/after.png" || true
-            xdotool mousemove --sync 612 188 click 1
+            xdotool mousemove --sync 610 138 click 1
           fi
           result=0
           wait "$dp" || result=$?
           cat "$testdir/container.log"
           if [ "$result" -ne 0 ]; then
             for file in "$testdir"/run/*.log; do [ ! -f "$file" ] || { printf '\n--- %s ---\n' "$file"; tail -100 "$file"; }; done
+            [ ! -f "$testdir/run/framed.bin" ] || strings "$testdir/run/framed.bin" | head -10 || true
           fi
           exit "$result"
       - uses: actions/upload-artifact@v4
