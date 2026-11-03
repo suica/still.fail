@@ -1,0 +1,41 @@
+name: Linux Wayland station validation
+on:
+  push:
+    branches: [ci/linux-wayland-desktops-v4-20261103]
+permissions:
+  contents: read
+jobs:
+  station:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version-file: .node-version, package-manager-cache: false }
+      - run: npm install -g pnpm@10.33.0
+      - run: sudo apt-get update -qq && sudo apt-get install -y ffmpeg xdotool xvfb xauth x11-utils
+      - run: pnpm --dir station install --frozen-lockfile
+      - run: pnpm --dir station check
+      - name: Portal protocol and X11 regressions
+        working-directory: station
+        run: node --import ./test/setup-env.mjs --test test/linux-portal.test.ts test/x11-desktop.test.ts test/linux-screen-tools.test.ts
+      - name: Real X11 desktop over the screen protocol
+        working-directory: station
+        run: |
+          export STILLFAIL_TEST_X11=1 XDG_SESSION_TYPE=x11
+          unset WAYLAND_DISPLAY
+          xvfb-run -a -s '-screen 0 1280x800x24' node ../scripts/native.ts run mesh runner -- node --import ./test/setup-env.mjs --test --test-name-pattern='X11 desktop over the screen wire' test/x11-desktop.test.ts
+      - name: Check helper syntax
+        run: PYTHONPYCACHEPREFIX="$RUNNER_TEMP/pycache" python3 -m py_compile station/src/screens/linux-portal.py
+  centos-dependencies:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Check portal runtime packages in CentOS Stream 9
+        run: |
+          docker run --rm -v "$GITHUB_WORKSPACE:/src:ro" quay.io/centos/centos:stream9 bash -euxc '
+            dnf -y install python3-gobject gstreamer1-plugins-base gstreamer1-plugins-good pipewire-gstreamer xdg-desktop-portal xdg-desktop-portal-gnome
+            /usr/bin/python3 -c "import gi; gi.require_version(\"Gst\", \"1.0\"); from gi.repository import Gst; Gst.init(None); names = (\"pipewiresrc\", \"queue\", \"identity\", \"videoconvert\", \"videoscale\", \"jpegenc\", \"appsink\"); missing = [n for n in names if not Gst.ElementFactory.find(n)]; print(\"missing GStreamer elements:\", missing); assert not missing"
+            PYTHONPYCACHEPREFIX=/tmp/pycache /usr/bin/python3 -m py_compile /src/station/src/screens/linux-portal.py
+          '
