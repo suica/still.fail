@@ -1,0 +1,22 @@
+name: Shell runtime maintenance validation
+on:
+  push:
+    branches: [ci/maintain-3454-20261103]
+permissions:
+  contents: read
+jobs:
+  station:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - run: npm install --global pnpm@10.33.0
+      - run: pnpm --dir station install --frozen-lockfile
+      - run: pnpm --dir station check
+      - name: Runtime discovery and existing station tests
+        working-directory: station
+        run: node ../scripts/native.ts run runner -- node --import ./test/setup-env.mjs --test --test-concurrency=2 --test-timeout=120000 test/shell-path.test.ts test/updates.test.ts test/accounts-login.test.ts test/device-tools.test.ts test/runner.test.ts test/logins.test.ts test/platform.test.ts
