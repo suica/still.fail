@@ -18,17 +18,17 @@
   .dot { background:#32966e; width:7px;height:7px;border-radius:50%;margin-left:auto }
   .facts { padding-left:23px; }
   .meters { display:flex; gap:4px; margin-top:5px }
-  .meter { background:#efeeed; border-radius:9px; height:19px; padding:2px 7px; white-space:nowrap; font-size:11px; color:#606067 }
+  .meter { width:68px; height:20px; background:#efeeed; border-radius:9px; padding:2px 3px; white-space:nowrap; font-size:10px; color:#606067; text-align:center }
   .meter b { color:#242428; font-weight:650 }
-  .gpus { display:grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap:4px; margin-top:5px }
-  .gpu { min-width:0; display:flex; align-items:center; justify-content:space-between; gap:5px; height:22px; border-radius:9px; background:#f5f4f2; padding:0 7px; font-variant-numeric:tabular-nums; font-size:11px }
+  .gpus { display:grid; grid-template-columns: repeat(3, 68px); gap:4px; margin-top:5px }
+  .gpu { width:68px; height:32px; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:0; border-radius:9px; background:#efeeed; padding:1px 2px; font-variant-numeric:tabular-nums; font-size:10px; line-height:14px }
   .gpu .label { color:#66646b; white-space:nowrap }
   .gpu .value { color:#242428; white-space:nowrap; font-weight:650 }
   .network { font-size:11px; color:#737179; margin-top:7px; line-height:16px }
   .foot { color:#77747a; margin-top:16px; font-size:12px }
 </style>
 <h1>Station 侧栏 · GPU 均匀排列</h1>
-<p class="explain">设计示意：每张卡一格，等宽排列；数字依次是利用率和剩余显存。</p>
+<p class="explain">设计示意：GPU、CPU、内存、磁盘每格同宽；GPU 显示利用率和剩余显存。</p>
 <div class="examples">
   <section><h2>2 张 GPU</h2><div class="panel">
     <div class="station"><div class="name"><i class="server"></i>usa-sy<i class="dot"></i></div><div class="facts"><div class="meters"><span class="meter">CPU <b>90%</b></span><span class="meter">内存 <b>3.4G</b></span><span class="meter">磁盘 <b>320G</b></span></div><div class="network">香港中继 · 381 ms</div></div></div>
@@ -42,4 +42,5 @@
   </div></section>
 </div>
 <p class="foot">示例数据 · 设计稿，不是应用实机截图</p>
+<script>const proof = document.createElement("output"); proof.id = "geometry"; proof.hidden = true; proof.textContent = JSON.stringify([...document.querySelectorAll(".meter,.gpu")].map(e => ({type:e.className,width:e.getBoundingClientRect().width,overflow:e.scrollWidth > e.clientWidth, text:e.innerText}))); document.body.append(proof)</script>
 </html>
