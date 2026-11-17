@@ -1462,7 +1462,13 @@ fn board_files_node(
         @sf.waiting_tile_node(slot, fn(p) {
           p.pick(fn() { picture() != "" && picture() != "!" }, at_once=true, fn(v, has_picture) {
             if has_picture {
-              v.image(By(fn() { Some((picture(), "", 56)) })) |> ignore
+              // (as big as the tile, covering it)
+              v
+              .width(Is(Some(@sf.waiting_tile_side)))
+              .height(Is(Some(@sf.waiting_tile_side)))
+              .image(By(fn() { Some((picture(), "", 168)) }))
+              .image_covers(Is(true))
+              |> ignore
             } else {
               v.lines_up(Is(Some(Middle))).lies_along(Is(Middle)) |> ignore
               @sf.icon_node(v, "file", 22.0, By(fn() { @sf.theme().p.muted })) |> ignore

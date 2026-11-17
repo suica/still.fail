@@ -524,7 +524,13 @@ fn waiting_node(parent : @view.View, src : Source, w : Writing, tips : @sf.TipLa
               fn(p) {
                 p.pick(fn() { picture().unwrap_or("") != "" }, at_once=true, fn(pv, drawn) {
                   if drawn {
-                    pv.image(By(fn() { Some((picture().unwrap_or(""), "", 56)) })) |> ignore
+                    // (as big as the tile, covering it)
+                    pv
+                    .width(Is(Some(@sf.waiting_tile_side)))
+                    .height(Is(Some(@sf.waiting_tile_side)))
+                    .image(By(fn() { Some((picture().unwrap_or(""), "", 168)) }))
+                    .image_covers(Is(true))
+                    |> ignore
                   } else {
                     pv.lines_up(Is(Some(@view.Along::Middle))).lies_along(Is(@view.Lies::Middle)) |> ignore
                     @sf.icon_node(pv, "file", 22.0, By(fn() { @sf.theme().p.muted })) |> ignore
