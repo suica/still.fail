@@ -7,13 +7,15 @@
 // in its two foot corners all the way, what it holds keeping to its foot as it changes height (View::resizes, foot:
 // 「以底部为 origin」, the owner 2026-10-30), its words going across from where they stood on one line to where they
 // stand opened on the same way. Not made as nodes yet, so not shown here: the `@` menu, 抄送 and what is said over it
-// (sfpages' chat_ref, cc_chooser, chat_notices), a picture's tile (a picture waits as its file's card), its words
-// flying from where each card stood.
+// (sfpages' chat_ref, cc_chooser, chat_notices), its words flying from where each card stood.
 
 ///|
 /// What a composer made as nodes writes to and how it shows (ComposerSpec's, followed): its station, its draft, its
 /// chat's session (typing warms its agent), what its field says while empty, whether it takes words and nothing goes
-/// (`locked`), whether its station is offline (no file taken in), whether typing warms its agent.
+/// (`locked`), whether its station is offline (no file taken in), whether typing warms its agent; whether it stays
+/// opened however little it holds (`roomy`: a new chat's, 待派发's), whether it takes the cursor as it is made (a chat's,
+/// as it comes on top), what stands in its foot's row between ＋ and send (`tools`: where it goes), and how much room its
+/// words leave at their end, clear of what stands over its top corner (`words_end`), and what send is called (`sends`).
 priv struct NodeSpec {
   station : String
   draft : String
@@ -22,6 +24,11 @@ priv struct NodeSpec {
   locked : () -> Bool
   offline : () -> Bool
   warm_agent : () -> Bool
+  roomy : Bool
+  takes_focus : Bool
+  tools : ((@view.View) -> Unit)?
+  words_end : Double
+  sends : String
 }
 
 ///|
@@ -40,6 +47,11 @@ pub fn chat_composer_node(parent : @view.View, src : Source, r : ChatRef, tips :
     locked: fn() { false },
     offline: fn() { head().map(fn(v) { v.offline }).unwrap_or(false) },
     warm_agent: fn() { !head().map(fn(v) { v.archived }).unwrap_or(false) },
+    roomy: false,
+    takes_focus: true,
+    tools: None,
+    words_end: 0.0,
+    sends: @sf.t("web-main.composer.send"),
   }
   parent.by_room(fn(foot, room) {
     foot
@@ -96,11 +108,12 @@ fn composer_node(
   let lingers = @signals.signal(false)
   // (whether it is opened: composer_state's, followed)
   let open = fn() {
-    composer_wants_open(w, roomy=false, focused=w.field.focused(), lingers=lingers.get())
+    composer_wants_open(w, roomy=spec.roomy, focused=w.field.focused(), lingers=lingers.get())
   }
   // (made for a chat come on top, with keyboard and mouse: the cursor in it, its keyboard at hand, taken from no field
   // in use (the switcher's, a dialog's); asked for, composer_take_focus, with touch too, its keyboard up)
-  if @signals.untracked(fn() {
+  if spec.takes_focus &&
+    @signals.untracked(fn() {
       (!@sf.soft_keyboard() && !@ui.field_has_keys()) || (composing.wanted && !(spec.locked)())
     }) {
     composing.wanted = false
@@ -231,7 +244,7 @@ fn composer_node(
       words
       .padding(By(fn() {
         if open() {
-          (8.0, 8.0, 8.0, side() + @sf.composer_round_in() - @sf.composer_pad + 10.0)
+          (8.0, 8.0, 8.0 + spec.words_end, side() + @sf.composer_round_in() - @sf.composer_pad + 10.0)
         } else {
           let gap = side() + 1.0
           (gap, dmax(0.0, (side() - line()) / 2.0), gap + 8.0, dmax(0.0, (side() - line()) / 2.0))
@@ -290,10 +303,21 @@ fn composer_node(
         shortcut="composer.file",
       )
       |> Some
-      row.box(fn(gap) { gap.grow(Is(1.0)) |> ignore }) |> ignore
+      // (between them what it says of where it goes, where it says so: from ＋'s end, as far as send leaves)
+      row.box(fn(gap) {
+        gap.grow(Is(1.0)).shrink(Is(1.0)).min_width(Is(Some(0.0))) |> ignore
+        match spec.tools {
+          Some(tools) => {
+            gap.row(Is(true)).lines_up(Is(Some(@view.Along::Middle))).padding(Is((6.0, 0.0, 6.0, 0.0))) |> ignore
+            tools(gap)
+          }
+          None => ()
+        }
+      })
+      |> ignore
       @sf.send_button_node(
         row,
-        fn() { @sf.t("web-main.composer.send") },
+        fn() { spec.sends },
         fn() { composer_ready(w, locked=(spec.locked)()) },
         fn() { w.starting.get() },
         fn() { composer_submit(src, w, spec.station, locked=(spec.locked)(), send) |> ignore },
@@ -393,9 +417,9 @@ fn composer_field_node(
     label=spec.placeholder,
   )
   f.grow(Is(1.0)) |> ignore
-  // nothing typed: ↑ ↓ the chat above or below, as the list shows them now
+  // nothing typed in a chat's: ↑ ↓ the chat above or below, as the list shows them now
   f.on_key(fn(k) {
-    guard k.mods == 0 && (k.code == @ui.key_code_up || k.code == @ui.key_code_down) else { return false }
+    guard spec.session != "" && k.mods == 0 && (k.code == @ui.key_code_up || k.code == @ui.key_code_down) else { return false }
     guard w.text.get() == "" && !(@sfbase.neighbour_held.val)() else { return false }
     (@sfbase.neighbour_go.val)(src, ws, if k.code == @ui.key_code_up { -1 } else { 1 })
     true
@@ -439,7 +463,7 @@ let warmed_at : Map[String, Double] = Map([])
 
 ///|
 /// What waits to go with draft `w` in its composer made as nodes, in `parent`: its quotes, each its card with the line
-/// for what is said of it, then its files, each its card (a picture's too, as yet), wrapping; each ✕ taking it out, a
+/// for what is said of it, then its files, each its card (a picture its tile), wrapping; each ✕ taking it out, a
 /// failed one's ↻ trying it again.
 fn waiting_node(parent : @view.View, src : Source, w : Writing, tips : @sf.TipLayer) -> Unit {
   parent.box(fn(col) {
@@ -490,6 +514,34 @@ fn waiting_node(parent : @view.View, src : Source, w : Writing, tips : @sf.TipLa
       files.each(fn() { w.files.get() }, fn(f) { text(Some(f), "id") }, along_row=true, fn(item, f) {
         let v = fn() { Some(f.get()) }
         let id = text(Some(f.untracked()), "id")
+        // a picture as its tile (the old one's composer_picture): its ✕ in its corner, going up darkened, a failed
+        // one's ↻ trying it again
+        let picture = fn() { waiting_picture(src, w, v()) }
+        if @signals.untracked(picture) is Some(_) {
+          @sf.with_corner_remove_node(item, fn() { remove_label(v(), text(v(), "name")) }, @sf.card_corner, fn(at) {
+            @sf.waiting_tile_node(
+              at,
+              fn(p) {
+                p.pick(fn() { picture().unwrap_or("") != "" }, at_once=true, fn(pv, drawn) {
+                  if drawn {
+                    pv.image(By(fn() { Some((picture().unwrap_or(""), "", 56)) })) |> ignore
+                  } else {
+                    pv.lines_up(Is(Some(@view.Along::Middle))).lies_along(Is(@view.Lies::Middle)) |> ignore
+                    @sf.icon_node(pv, "file", 22.0, By(fn() { @sf.theme().p.muted })) |> ignore
+                  }
+                })
+              },
+              fn() { going_now(v()) },
+              fn() { None },
+              fn() { text(v(), "error") != "" },
+              fn() { writing_retry(src, w, id) },
+              fn() { @sf.t("common.retry") },
+            )
+            |> ignore
+          }, fn() { writing_remove(src, w, id) })
+          |> ignore
+          return
+        }
         @sf.file_card_node(
           item,
           tips,

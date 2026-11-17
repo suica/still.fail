@@ -61,7 +61,6 @@ priv struct BoardOwn {
   /// each by its key (board_cards'), each worked out once for all that reads it, told only as it comes out otherwise
   mut columns : () -> Array[(String, String)]
   mut cards_of : (String) -> Array[BoardKey]
-  field : @ui.Field
   /// The task currently being written, whose files have their own persisted composer.
   draft_id : @signals.Signal[String]
   station : @signals.Signal[String]
@@ -391,7 +390,6 @@ pub fn board_node(
     me: fn() { me_now.get() },
     columns: fn() { [] },
     cards_of: fn(_) { [] },
-    field: @ui.Field::new(),
     draft_id: @signals.signal(@sfbase.board_next_id()),
     station: @signals.signal(""),
     archived: archive,
@@ -1290,7 +1288,9 @@ fn board_add_room(b : @view.View, own : BoardOwn, tips : @sf.TipLayer) -> Unit {
   // (opened: empty)
   b.reacts(open, fn(o) {
     if o {
-      own.field.set("")
+      let w = @sfbase.writing(own.src, @sfbase.board_file_key(@signals.untracked(own.ws), own.draft_id.untracked()))
+      w.field.set("")
+      writing_text(own.src, w, "")
     }
   }, at_start=false)
   // (made anew at once as what was written in it is added, closed and laid nowhere: the one that held it let go with
@@ -1305,29 +1305,35 @@ fn board_add_room(b : @view.View, own : BoardOwn, tips : @sf.TipLayer) -> Unit {
 }
 
 ///|
-/// The card a draft is written in at 待派发's top, as the cards under it look: what it is, × to put it away (wide), the
-/// station it goes to, 添加.
+/// The card a draft is written in at 待派发's top: a chat's composer (composer_node), opened all along, its pictures
+/// over its words, ＋ and send (添加) in its foot corners, the station it goes to between them, × to put it away (wide).
+/// Made again for each draft and each station chosen: its draft is that one's, its files go up to that station.
 fn board_add(a : @view.View, own : BoardOwn, wide : Bool, tips : @sf.TipLayer) -> Unit {
   let card_at : Ref[@view.View?] = Ref(None)
   let ws = @signals.untracked(own.ws)
+  guard @signals.untracked(fn() { @sfbase.workspace_in_view(own.src).0 }) is Some(workspace) else { return }
   let writing = fn() { @sfbase.writing(own.src, @sfbase.board_file_key(ws, own.draft_id.get())) }
   let files = fn() {
     writing().files.get().map(fn(f) -> @sfbase.BoardFile { { id: text(Some(f), "id"), name: text(Some(f), "name") } })
   }
-  let ready = fn() {
-    let w = writing()
-    (own.field.text().trim(chars=" \n\r\t").to_owned() != "" || !w.files.get().is_empty()) &&
-    w.pending.get() == 0 && !w.files.get().iter().any(fn(f) { text(Some(f), "error") != "" }) &&
-    board_station_now(own) != ""
+  // (its words let go of with it: the next draft's are its own)
+  let emptied = fn(w : Writing) {
+    w.field.set("")
+    writing_text(own.src, w, "")
   }
   let discard = fn() {
     @sfbase.board_files_discard(own.src, ws, own.draft_id.untracked(), @signals.untracked(files))
+    emptied(@signals.untracked(writing))
     own.draft_id.set(@sfbase.board_next_id())
   }
-  let add = fn() {
-    guard @signals.untracked(ready) else { return }
-    let words = own.field.text()
+  let add = fn(w : Writing) {
     let st = @signals.untracked(fn() { board_station_now(own) })
+    guard st != "" &&
+      w.pending.untracked() == 0 &&
+      !w.files.untracked().iter().any(fn(f) { text(Some(f), "error") != "" }) else {
+      return
+    }
+    let words = w.field.text()
     let name = own.stations_by.peek(st).map(fn(s) { s.name }).unwrap_or("")
     let from = match card_at.val {
       Some(c) if c.alive() => Some(c.placed_window_now())
@@ -1347,27 +1353,16 @@ fn board_add(a : @view.View, own : BoardOwn, wide : Bool, tips : @sf.TipLayer) -
     if wide && added is Some(id) {
       own.added_from = from.map(fn(r) { (id, r) })
     }
-    if added is Some(_) { own.draft_id.set(@sfbase.board_next_id()) }
-    @signals.end_batch()
-    guard added is Some(_) else { return }
-    if !wide {
+    if added is Some(_) {
       // (narrow it stays, 待派发's own line, empty for the next)
-      own.field.set("")
+      emptied(w)
+      own.draft_id.set(@sfbase.board_next_id())
     }
+    @signals.end_batch()
   }
   let cancel = fn() {
     discard()
-    own.field.set("")
     @sfbase.board_adding.set(false)
-  }
-  // (what stands in its foot's corners, as tall as a control, concentric with the card's: as far in as that leaves)
-  let h = fn() { @sf.theme().control_h }
-  let foot_in = fn() { @sf.card_corner - h() / 2.0 }
-  // (添加 as tall as a button, lower than a control where it is touched: as far in from the end as its middle leaves it
-  // from the foot, concentric with the card's corner too)
-  let add_in = fn() {
-    let d = h() - @sf.button_height()
-    if d > 0.0 { d / 2.0 } else { 0.0 }
   }
   a.box(fn(card) {
     card.owns(fn() { discard() }) |> ignore
@@ -1377,92 +1372,60 @@ fn board_add(a : @view.View, own : BoardOwn, wide : Bool, tips : @sf.TipLayer) -
     }, fn(error) {
       if error != "" { @sfbase.toast_later(error) }
     }, at_start=false)
-    card
-    .ground(By(fn() { @sf.theme().p.card }))
-    .radius(Is(@sf.card_corner))
-    .padding(By(fn() { (foot_in(), card_pad, foot_in(), foot_in()) }))
-    .gap(Is(12.0))
-    |> ignore
-    // its pictures over its words, as the composer has them, only once there are some (pasted, dropped or picked: the
-    // field takes them, nothing says it does); clear of 取消's corner where that stands
-    card.show(fn() { !files().is_empty() }, at_once=true, fn(at) {
-      at.padding(By(fn() { (0.0, 0.0, if wide { card_title_end() + card_pad - foot_in() } else { 0.0 }, 0.0) })) |> ignore
-      board_files_node(at, own.src, fn() { @sfbase.board_file_key(ws, own.draft_id.get()) }, files, remove=fn(f) {
-        @sfbase.writing_remove(own.src, @signals.untracked(writing), f.id)
+    // (Escape puts it away, as × does)
+    if wide {
+      card.on_key(fn(k) {
+        if k.code == @ui.key_escape {
+          cancel()
+          true
+        } else {
+          false
+        }
       })
+      |> ignore
+    }
+    card.pick(fn() { (own.draft_id.get(), board_station_now(own)) }, at_once=true, fn(c, made) {
+      let (id, st) = made
+      let spec : NodeSpec = {
+        station: st,
+        draft: @sfbase.board_file_key(ws, id),
+        session: "",
+        placeholder: board_words("placeholder"),
+        locked: fn() { false },
+        offline: fn() { false },
+        warm_agent: fn() { false },
+        roomy: true,
+        takes_focus: false,
+        // (where it goes: the library's choice of a station, round as ＋ and send)
+        tools: Some(fn(r) {
+          @sf.station_choice_node(
+            r,
+            own.stations,
+            fn() { board_station_now(own) },
+            fn(at) { own.station.set(at) },
+            title=board_words("goes-on"),
+            label=fn(name) { board_words("goes-on") + ": " + name },
+            round=true,
+          )
+          |> ignore
+        }),
+        // (wide, clear of × in its corner)
+        words_end: if wide { card_title_end() } else { 0.0 },
+        sends: board_words("add"),
+      }
+      composer_node(c, own.src, workspace, spec, add, fn() { composer_alone }, tips)
     })
-    // its words, on the card's own paper: no frame round them, where a card's title begins
-    card.box(fn(w) {
-      w.row(Is(true)).padding(By(fn() { (card_pad - foot_in(), 0.0, if wide { card_title_end() + card_pad - foot_in() } else { card_pad - foot_in() }, 0.0) })) |> ignore
-      let typed = @ui.field(
-        w,
-        own.field,
-        placeholder=board_words("placeholder"),
-        label=board_words("placeholder"),
-        max_lines=3,
-        enter_sends=true,
-        submitted=fn(_) { add() },
-        files=fn(got) {
-          let w = @signals.untracked(writing)
-          let station = @signals.untracked(fn() { board_station_now(own) })
-          for f in got { @sfbase.writing_add(own.src, w, station, f.0, f.1) }
-        },
-        leaves=[@ui.key_escape],
-        size_by=fn() { @sf.theme().t.ui },
-        colors_by=fn() {
-          let th = @ui.tree_theme()
-          (th.fg, th.subtle, th.accent)
-        },
-      )
-      // (tall enough to be found by a finger, all of it the field's)
-      typed.grow(Is(1.0)).basis(Is(Some(0.0))).shrink(Is(1.0)).min_height(Is(Some(32.0))) |> ignore
-      // (Escape puts it away, as × does)
-      if wide {
-        w.on_key(fn(k) {
-          if k.code == @ui.key_escape {
-            cancel()
-            true
-          } else {
-            false
-          }
+    // (opened to be written in: the cursor in it, each time it opens; once what opened it is done, its room in use by
+    // then, and once its room is laid out open where the host gives the focus by where it is: a browser's)
+    card.reacts(fn() { @sfbase.board_adding.get() }, fn(on) {
+      if on {
+        @signals.after_flush(fn() { @signals.untracked(writing).field.focus() })
+        card.at_moment(card.cause_at() + 1.0, fn() {
+          if @sfbase.board_adding.untracked() { @signals.untracked(writing).field.focus() }
         })
         |> ignore
       }
-      // (opened to be written in: the cursor in it, each time it opens)
-      // (once what opened it is done: its room in use by then)
-      typed.reacts(fn() { @sfbase.board_adding.get() }, fn(on) {
-        if on {
-          @signals.after_flush(fn() { typed.ask_focus() |> ignore })
-          // (and once its room is laid out open where the host gives the focus by where it is: a browser's)
-          typed.at_moment(typed.cause_at() + 1.0, fn() { if @sfbase.board_adding.untracked() { typed.ask_focus() |> ignore } })
-          |> ignore
-        }
-      })
     })
-    |> ignore
-    card.box(fn(r) {
-      r.row(Is(true)).gap(Is(6.0)).lines_up(Is(Some(Middle))) |> ignore
-      // (where it goes: the library's choice of a station, round as the foot's buttons, its mark where a card's words
-      // begin)
-      @sf.station_choice_node(
-        r,
-        own.stations,
-        fn() { board_station_now(own) },
-        fn(at) { own.station.set(at) },
-        title=board_words("goes-on"),
-        label=fn(name) { board_words("goes-on") + ": " + name },
-        round=true,
-      )
-      |> ignore
-      r.box(fn(g) { g.grow(Is(1.0)).min_width(Is(Some(0.0))) |> ignore }) |> ignore
-      r.box(fn(k) {
-        k.shrink(Is(0.0)).margin(By(fn() { (0.0, 0.0, add_in(), 0.0) })) |> ignore
-        @sf.button_node(k, fn() { board_words("add") }, add, tone=Primary, disabled=fn() { !ready() })
-        |> ignore
-      })
-      |> ignore
-    })
-    |> ignore
   })
   |> ignore
   if wide {
@@ -1477,7 +1440,6 @@ fn board_files_node(
   src : Source,
   key : () -> String,
   files : () -> Array[@sfbase.BoardFile],
-  remove? : (@sfbase.BoardFile) -> Unit,
 ) -> Unit {
   let strip = fn(p : @view.View) {
     p.height(Is(Some(64.0))).min_width(Is(Some(0.0))) |> ignore
@@ -1497,26 +1459,17 @@ fn board_files_node(
             }
           }
         }
-        let tile = fn(at : @view.View) {
-          @sf.waiting_tile_node(at, fn(p) {
-            p.pick(fn() { picture() != "" && picture() != "!" }, at_once=true, fn(v, has_picture) {
-              if has_picture {
-                v.image(By(fn() { Some((picture(), "", 56)) })) |> ignore
-              } else {
-                v.lines_up(Is(Some(Middle))).lies_along(Is(Middle)) |> ignore
-                @sf.icon_node(v, "file", 22.0, By(fn() { @sf.theme().p.muted })) |> ignore
-              }
-            })
-          }, fn() { false }, fn() { None }, fn() { false }, fn() {  }, fn() { "" })
-          |> ignore
-        }
-        match remove {
-          Some(drop) => {
-            @sf.with_corner_remove_node(slot, fn() { @sf.t("web-main.file.remove", args=[("name", file().name)]) }, @sf.card_corner, tile, fn() { drop(@signals.untracked(file)) })
-            |> ignore
-          }
-          None => tile(slot)
-        }
+        @sf.waiting_tile_node(slot, fn(p) {
+          p.pick(fn() { picture() != "" && picture() != "!" }, at_once=true, fn(v, has_picture) {
+            if has_picture {
+              v.image(By(fn() { Some((picture(), "", 56)) })) |> ignore
+            } else {
+              v.lines_up(Is(Some(Middle))).lies_along(Is(Middle)) |> ignore
+              @sf.icon_node(v, "file", 22.0, By(fn() { @sf.theme().p.muted })) |> ignore
+            }
+          })
+        }, fn() { false }, fn() { None }, fn() { false }, fn() {  }, fn() { "" })
+        |> ignore
       })
     }) |> ignore
   }
