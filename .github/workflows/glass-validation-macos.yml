@@ -1,0 +1,18 @@
+name: glass-validation-macos
+on:
+  push:
+    branches: [test/glass-capture-macos-ci]
+permissions:
+  contents: read
+jobs:
+  render:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and run the Metal renderer regression
+        run: |
+          cc -Wall -fobjc-arc -I libs/mbui/src/host -I .ci-scratch libs/mbui/scripts/apple_render_test.m \
+            -framework Foundation -framework QuartzCore -framework Metal -framework CoreGraphics -framework ImageIO \
+            -o /tmp/apple_render_test
+          /tmp/apple_render_test
