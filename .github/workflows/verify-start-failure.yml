@@ -1,0 +1,107 @@
+name: Verify failed agent starts
+on:
+  push:
+    branches: [ci/start-failure-check]
+permissions:
+  contents: read
+  actions: read
+jobs:
+  harness:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with: { persist-credentials: false }
+      - uses: actions/setup-node@v4
+        with: { node-version-file: .node-version }
+      - name: Set up MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh -o "$RUNNER_TEMP/moon-install.sh"
+          bash "$RUNNER_TEMP/moon-install.sh"
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Set up Zig
+        run: |
+          curl -fsSL https://ziglang.org/download/0.16.0/zig-x86_64-linux-0.16.0.tar.xz -o "$RUNNER_TEMP/zig.tar.xz"
+          echo "70e49664a74374b48b51e6f3fdfbf437f6395d42509050588bd49abe52ba3d00  $RUNNER_TEMP/zig.tar.xz" | sha256sum -c --quiet
+          tar -xf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          mkdir -p "$RUNNER_TEMP/zig-bin"
+          printf '#!/bin/sh\nif [ "${1:-}" = cc ]; then shift; exec "%s/zig" cc -fno-sanitize=undefined "$@"; fi\nexec "%s/zig" "$@"\n' "$RUNNER_TEMP/zig-x86_64-linux-0.16.0" "$RUNNER_TEMP/zig-x86_64-linux-0.16.0" > "$RUNNER_TEMP/zig-bin/zig"
+          chmod +x "$RUNNER_TEMP/zig-bin/zig"
+          echo "$RUNNER_TEMP/zig-bin" >> "$GITHUB_PATH"
+      - name: Build station test harness
+        env:
+          STATION_READER_OPT: -O0
+          MBC_UNIT_KB: '8192'
+          MBC_INIT_SPLIT: '0'
+        run: bash station/mb/build.sh --harness linux-x64 "$GITHUB_WORKSPACE/out/stillfail-reader-harness"
+      - uses: actions/upload-artifact@v4
+        with: { name: station-harness, path: out/stillfail-reader-harness, retention-days: 1 }
+  station:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      STILLFAIL_CHECK_PART: station
+      STILLFAIL_MB_READER: '${{ github.workspace }}/out/stillfail-reader'
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with:
+          name: station-reader
+          path: out
+          github-token: '${{ github.token }}'
+          run-id: 45005985088
+      - run: chmod +x out/stillfail-reader
+      - name: Set up MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh -o "$RUNNER_TEMP/moon-install.sh"
+          bash "$RUNNER_TEMP/moon-install.sh"
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - run: sh scripts/check.sh full 5dd4241dbe87bc8d1642e44008795082d3210df0..HEAD
+  core:
+    needs: harness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix: { shard: [0, 1, 2] }
+    env:
+      STILLFAIL_CHECK_PART: core-tests
+      STILLFAIL_CORE_SHARD: '${{ matrix.shard }}/3'
+      STILLFAIL_MB_HARNESS: '${{ github.workspace }}/out/stillfail-reader-harness'
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with: { name: station-harness, path: out }
+      - run: chmod +x out/stillfail-reader-harness
+      - run: sh scripts/check.sh full 5dd4241dbe87bc8d1642e44008795082d3210df0..HEAD
+  station-tests:
+    needs: harness
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix: { shard: [0, 1, 2, 3, 4, 5] }
+    env:
+      STILLFAIL_CHECK_PART: station-tests
+      STILLFAIL_STATION_SHARD: '${{ matrix.shard }}/6'
+      STILLFAIL_NODE_TEST_JOBS: 4
+      STILLFAIL_MB_READER: '${{ github.workspace }}/out/stillfail-reader'
+      STILLFAIL_MB_HARNESS: '${{ github.workspace }}/out/stillfail-reader-harness'
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - uses: actions/download-artifact@v4
+        with: { name: station-harness, path: out }
+      - uses: actions/download-artifact@v4
+        with:
+          name: station-reader
+          path: out
+          github-token: '${{ github.token }}'
+          run-id: 45005985088
+      - run: chmod +x out/stillfail-reader out/stillfail-reader-harness
+      - run: sh scripts/check.sh full 5dd4241dbe87bc8d1642e44008795082d3210df0..HEAD
