@@ -1,0 +1,60 @@
+name: Status dot evidence
+on:
+  push:
+    branches: [media/status-dot-evidence-20261122]
+permissions:
+  contents: read
+jobs:
+  picture:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Set up a Farview stand-in
+        run: |
+          mkdir -p apps/mbui/deps/farview/client
+          cp -a evidence-fvclient/. apps/mbui/deps/farview/client/
+          cp apps/mbui/farview.pin apps/mbui/deps/farview/.pin
+      - name: Render a fictional station reached through a relay
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence" "$RUNNER_TEMP/inbox"
+          sed -i '' 's/("path", str("直连"))/("path", str("东京中继"))/;s/("via", str("direct"))/("via", str("relay"))/' apps/mbui/src/sfapp/settings/fixture.mbt
+          cat > "$RUNNER_TEMP/scene.drive" <<'DRIVE'
+          timeout 20000
+          wait 1200
+          exit
+          DRIVE
+          render() {
+            local label=$1
+            bash apps/mbui/scripts/media-job.sh picture "$RUNNER_TEMP/scene.drive" "$RUNNER_TEMP/job-$label"
+            local key
+            key=$(cat "$RUNNER_TEMP/job-$label/runtime.key")
+            bash apps/mbui/scripts/media-dev-build.sh "$key" "$RUNNER_TEMP/inbox" "" mbui-film-wasm
+            for fixture in place-stations settings-station; do
+              for dark in 0 1; do
+                MBUI_FIXTURE="$fixture" MBUI_WIN=1280x800 MBUI_FILM_SCALE=2 MBUI_FILM_INSET=1 MBUI_NATIVE_INPUT=mouse MBUI_LOCALE=zh MBUI_DARK="$dark" MBUI_PICTURE_AT=1000 bash "$RUNNER_TEMP/job-$label/run.sh" "$RUNNER_TEMP/evidence/$label-$fixture-$dark.png"
+              done
+            done
+          }
+          render after
+          for file in libs/sf-ui/src/settings_rows_node.mbt apps/mbui/src/sfdesk/attention.mbt apps/mbui/src/sfpages/news_node.mbt; do
+            git show 75c7a178d517259070eca12361d6b1ce6b63fc64:"$file" > "$file"
+          done
+          render before
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: status-dot-before-after
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 30
