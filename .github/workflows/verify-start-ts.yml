@@ -1,0 +1,19 @@
+name: Verify failed start TypeScript checks
+on:
+  push:
+    branches: [ci/start-failure-ts]
+permissions: { contents: read }
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      STILLFAIL_CHECK_PART: ts
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - name: Prepare the web core's prebuilt transport
+        run: node scripts/native.ts iroh-pkg
+      - name: Full TypeScript checks
+        run: sh scripts/check.sh full 5dd4241dbe87bc8d1642e44008795082d3210df0..HEAD
