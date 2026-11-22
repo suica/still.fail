@@ -36,7 +36,7 @@ jobs:
           old = 'parts.push(effort_word(effort))'
           before, marker, combos = s.partition('fn fix_combos() -> Json {')
           assert marker and old in combos
-          combos = combos.replace(old, 'parts.push("自动 · 高 · 模型选项不可用")', 1)
+          combos = combos.replace(old, 'parts.push(effort_word(effort) + " · 模型选项不可用，可调整其他设置")', 1)
           p.write_text(before + marker + combos)
           PY
           if [ '${{ matrix.side }}' = before ]; then
@@ -45,6 +45,16 @@ jobs:
       - name: Draw the model picker
         shell: bash
         run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/mbui/scripts/screens.sh')
+          s = p.read_text()
+          assert 'APP=sffix MODE=release' in s
+          assert '_build/native/release/build/stillfail/sffix' in s
+          s = s.replace('APP=sffix MODE=release', 'APP=sffix MODE=debug')
+          s = s.replace('_build/native/release/build/stillfail/sffix', '_build/native/debug/build/stillfail/sffix')
+          p.write_text(s)
+          PY
           bash apps/mbui/scripts/screens.sh rec newchat-model
           cp apps/mbui/out/screens/newchat-model.png model-${{ matrix.side }}.png
       - uses: actions/upload-artifact@v4
