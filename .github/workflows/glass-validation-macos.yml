@@ -6,6 +6,7 @@ permissions:
   contents: read
 jobs:
   render:
+    if: ${{ !contains(github.event.head_commit.message, 'Windows') }}
     runs-on: macos-15
     timeout-minutes: 5
     steps:
@@ -16,3 +17,18 @@ jobs:
             -framework Foundation -framework QuartzCore -framework Metal -framework CoreGraphics -framework ImageIO \
             -o /tmp/apple_render_test
           /tmp/apple_render_test
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: libs/mbui
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/msvc
+      - name: Build and run the Direct3D renderer test
+        run: |
+          mkdir -p out/vbuf
+          cl.exe -nologo -EHsc -W3 -WX -D_CRT_SECURE_NO_WARNINGS -Isrc/host scripts/win_vbuf_test.cpp -Foout/vbuf/ -Feout/vbuf/win_vbuf_test.exe -link d3d11.lib d3dcompiler.lib dcomp.lib dwmapi.lib gdi32.lib user32.lib windowscodecs.lib ole32.lib
+          out/vbuf/win_vbuf_test.exe
