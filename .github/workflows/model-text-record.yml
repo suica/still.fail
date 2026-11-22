@@ -1,0 +1,34 @@
+name: Model text recording
+on:
+  push:
+    branches: [media/model-textrec-current-20261122]
+permissions:
+  contents: read
+jobs:
+  record:
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Set up the Farview stand-in
+        shell: bash
+        run: |
+          mkdir -p apps/mbui/deps/farview/client
+          cp -a evidence-fvclient/. apps/mbui/deps/farview/client/
+          cp apps/mbui/farview.pin apps/mbui/deps/farview/.pin
+      - name: Record model screen text
+        shell: bash
+        run: bash apps/mbui/scripts/screens.sh rec newchat-model
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: model-text-record
+          path: |
+            apps/mbui/screens/text-mac.textrec
+            apps/mbui/out/screens/newchat-model.log
+          retention-days: 7
