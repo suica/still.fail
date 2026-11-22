@@ -32,7 +32,9 @@ jobs:
           sed -i '' 's/("path", str("直连"))/("path", str("东京中继"))/;s/("via", str("direct"))/("via", str("relay"))/' apps/mbui/src/sfapp/settings/fixture.mbt
           cat > "$RUNNER_TEMP/scene.drive" <<'DRIVE'
           timeout 20000
-          wait 1200
+          wait 1000
+          move 430 605
+          wait 1800
           exit
           DRIVE
           render() {
@@ -41,10 +43,8 @@ jobs:
             local key
             key=$(cat "$RUNNER_TEMP/job-$label/runtime.key")
             bash apps/mbui/scripts/media-dev-build.sh "$key" "$RUNNER_TEMP/inbox" "" mbui-film-wasm
-            for fixture in place-stations settings-station; do
-              for dark in 0 1; do
-                MBUI_FIXTURE="$fixture" MBUI_WIN=1280x800 MBUI_FILM_SCALE=2 MBUI_FILM_INSET=1 MBUI_NATIVE_INPUT=mouse MBUI_LOCALE=zh MBUI_DARK="$dark" MBUI_PICTURE_AT=1000 bash "$RUNNER_TEMP/job-$label/run.sh" "$RUNNER_TEMP/evidence/$label-$fixture-$dark.png"
-              done
+            for dark in 0 1; do
+              MBUI_FIXTURE=chat-compose MBUI_WIN=1280x800 MBUI_FILM_SCALE=2 MBUI_FILM_INSET=1 MBUI_NATIVE_INPUT=mouse MBUI_LOCALE=zh MBUI_DARK="$dark" MBUI_PICTURE_AT=2500 bash "$RUNNER_TEMP/job-$label/run.sh" "$RUNNER_TEMP/evidence/$label-chat-$dark.png"
             done
           }
           render after
