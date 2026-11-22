@@ -162,6 +162,7 @@ void mb_render_use(int wid) {
 
 // the numbers of an instance (src/ui/scene.mbt)
 #define MB_INST 60
+#include "glass_damage.h"
 
 static const char *shader_src =
     "// the kind of what this pixel shader draws, fixed (kind_ps); -1 any, as the instance says\n"
@@ -2284,7 +2285,7 @@ static int ensure_vbuf(size_t room) {
 // canvas, only the parts that differ where it holds the frame before; how many in `parts_out` (-1 all of it, 0 none),
 // the parts in `cuts`.
 static int submit(const double *inst, int32_t count, double r, double g, double b, int *parts_out = NULL,
-                  D3D11_RECT *cuts = NULL) {
+                  D3D11_RECT *cuts = NULL, int adaptive_damage = 0) {
   if (!rtv || !dev || !ctx || count < 0) return 0;
   size_t slots = (size_t)(count > 0 ? count : 1);
   const size_t stride_bytes = (size_t)MB_INST * sizeof(float);
@@ -2335,6 +2336,8 @@ static int submit(const double *inst, int32_t count, double r, double g, double 
     kept = &canvas_ok;
   }
   D3D11_RECT parts[MB_PARTS];
+  if (adaptive_damage && !dirty_whole &&
+      !mb_glass_damage_expand(last_inst, count, dirty, dirty_n, fb_w / vscale, fb_h / vscale, vscale)) dirty_whole = 1;
   int np = take_parts(fb_w, fb_h, *kept, parts);
   int missing = 0;
   if (np < 0) {
@@ -2402,7 +2405,8 @@ int mb_render_present(const double *inst, int32_t count, double r, double g, dou
   ad_backdrop_changed = 1;
   ad_cur_dt = ad_next_dt(rw);
   rw->ad_frame_serial++;
-  if (dirty_told && !dirty_whole && rw->ad_settling) {
+  int adaptive_damage = dirty_told && !dirty_whole && rw->ad_settling;
+  if (adaptive_damage) {
     for (int i = 0; i < MB_ADAPTIVE_MAX; i++) {
       if (rw->ad_slots[i].active && rw->ad_slots[i].settle_left > 0.0)
         mb_host_render_dirty(rw->ad_slots[i].cx - rw->ad_slots[i].hx - 4.0,
@@ -2410,7 +2414,7 @@ int mb_render_present(const double *inst, int32_t count, double r, double g, dou
                              rw->ad_slots[i].hx * 2.0 + 8.0, rw->ad_slots[i].hy * 2.0 + 8.0);
     }
   }
-  int drawn = submit(inst, count, r, g, b, &n, parts);
+  int drawn = submit(inst, count, r, g, b, &n, parts, adaptive_damage);
   if (drawn) ad_finalize_frame(rw, n < 0, rw->ad_frame_serial);
   glass_idle_tick();
   if (!drawn || !chain) {
@@ -2456,6 +2460,8 @@ int mb_render_adaptive_step(int wid) {
                            rw->ad_slots[i].cy - rw->ad_slots[i].hy - 4.0,
                            rw->ad_slots[i].hx * 2.0 + 8.0, rw->ad_slots[i].hy * 2.0 + 8.0);
   }
+  if (!dirty_whole && !mb_glass_damage_expand(last_inst, last_count, dirty, dirty_n,
+                                               fb_w / vscale, fb_h / vscale, vscale)) dirty_whole = 1;
   ad_mode = 1;
   ad_backdrop_changed = 0;
   ad_cur_dt = ad_next_dt(rw);

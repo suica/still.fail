@@ -12,6 +12,7 @@
 
 // the numbers of an instance (src/ui/scene.mbt)
 #define MB_INST 60
+#include "glass_damage.h"
 
 static id<MTLDevice> dev;
 static id<MTLCommandQueue> queue;
@@ -32,7 +33,7 @@ static dispatch_semaphore_t inflight;
 // the captures of glass over native views a frame has at most (glass_through)
 #define MB_THROUGH 16
 typedef struct {
-  int told, whole, n;
+  int told, whole, n, glass_closure;
   double r[MB_PARTS][4];
 } MBDirty;
 
@@ -239,6 +240,7 @@ static void dirty_join(MBDirty *d, const MBDirty *was) {
     d->whole = 1;
     return;
   }
+  d->glass_closure |= was->glass_closure;
   for (int i = 0; i < was->n; i++) dirty_add(d, was->r[i][0], was->r[i][1], was->r[i][2], was->r[i][3]);
 }
 
@@ -1754,6 +1756,7 @@ static void ad_finalize_frame(MBRenderWin *w, int whole_frame, uint64_t serial) 
       dirty_add(&sd, s->cx - s->hx - 4.0, s->cy - s->hy - 4.0, s->hx * 2.0 + 8.0, s->hy * 2.0 + 8.0);
     }
   }
+  sd.glass_closure = settling;
   os_unfair_lock_lock(&present_mu);
   w->ad_settle_dirty = sd;
   os_unfair_lock_unlock(&present_mu);
@@ -2192,7 +2195,11 @@ static void encode(id<MTLCommandBuffer> cb, id<MTLTexture> target, id<MTLRenderP
 static int draw_parts(id<MTLCommandBuffer> cb, id<MTLTexture> target, id<MTLBuffer> buf, int32_t count, double r,
                       double g, double b, int kept, const MBDirty *d, double ad_dt, uint64_t ad_serial) {
   MTLScissorRect parts[MB_PARTS];
-  int n = take_parts(d, (int)target.width, (int)target.height, kept, parts);
+  MBDirty expanded = *d;
+  if (expanded.glass_closure && expanded.told && !expanded.whole && kept && !pictures_missing &&
+      !mb_glass_damage_expand((const float *)buf.contents, count, expanded.r, expanded.n,
+                              target.width / at_scale, target.height / at_scale, at_scale)) expanded.whole = 1;
+  int n = take_parts(&expanded, (int)target.width, (int)target.height, kept, parts);
   int missing = 0;
   if (n < 0) {
     encode(cb, target, mpipe, buf, count, r, g, b, 1, NULL, ad_dt, ad_serial);

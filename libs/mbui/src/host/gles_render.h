@@ -25,6 +25,7 @@
 
 // the numbers of an instance (src/ui/scene.mbt)
 #define MB_INST 60
+#include "glass_damage.h"
 // the glyphs' atlases, square, what goes where in them MoonBit's (hostapi's atlas.mbt): the words' (a byte a texel,
 // how much of it the glyph covers: drawn in the text's colour; as many bytes as one RGBA atlas half as wide) and colour
 // glyphs' (RGBA: an emoji's own). A colour glyph's place across is MB_ATLAS_COLOR_U past its place in its atlas (what
@@ -2087,6 +2088,8 @@ static void gl_present_kept(int32_t count, double r, double g, double b) {
         gl_dirty_add(ad_slots[i].cx - ad_slots[i].hx - 4.0, ad_slots[i].cy - ad_slots[i].hy - 4.0,
                      ad_slots[i].hx * 2.0 + 8.0, ad_slots[i].hy * 2.0 + 8.0);
     }
+    if (!dirty_whole && !mb_glass_damage_expand(fbuf, count, dirty, dirty_n, fb_w / cur_scale, fb_h / cur_scale,
+                                                 cur_scale)) dirty_whole = 1;
   }
   gl_present_drawn(count, r, g, b);
   ad_finalize_frame(whole, ad_frame_serial);
@@ -2095,12 +2098,8 @@ static void gl_present_kept(int32_t count, double r, double g, double b) {
 
 static int gl_adaptive_step(void) {
   if (!ad_settling || kept_count <= 0 || !fbuf) return 0;
-  dirty_told = dirty_whole = dirty_n = 0;
-  for (int i = 0; i < MB_ADAPTIVE_MAX; i++) {
-    if (ad_slots[i].active && ad_slots[i].settle_left > 0.0)
-      gl_dirty_add(ad_slots[i].cx - ad_slots[i].hx - 4.0, ad_slots[i].cy - ad_slots[i].hy - 4.0,
-                   ad_slots[i].hx * 2.0 + 8.0, ad_slots[i].hy * 2.0 + 8.0);
-  }
+  dirty_told = 1;
+  dirty_whole = dirty_n = 0;
   gl_present_kept(kept_count, kept_r, kept_g, kept_b);
   return 1;
 }

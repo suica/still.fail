@@ -1150,6 +1150,48 @@ int main(void) {
       glass_forget();
     }
 
+    // A selection changes shape data while two adaptive glasses share a capture. Settle regions must contain the
+    // complete capture so they never blur the preceding frame's glass or foreground.
+    {
+      double a[6 * MB_INST];
+      rect_at(a, 0, 0, 400, 300, 0, 0.95, 0.95, 0.95, 0);
+      rect_at(a + MB_INST, 56, 216, 160, 12, 0, 0.1, 0.1, 0.1, 0);
+      rect_at(a + 2 * MB_INST, 40, 116, 140, 32, 6, 0.99, 0.99, 0.99, -1);
+      rect_at(a + 3 * MB_INST, 32, 180, 336, 92, 6, 0.99, 0.99, 0.99, -1);
+      for (int i = 2; i <= 3; i++) {
+        a[i * MB_INST + 4] = 16.0;
+        a[i * MB_INST + 6] = 1.0;
+        a[i * MB_INST + 7] = 4.0;
+        a[i * MB_INST + 11] = 0x67 / 255.0;
+        a[i * MB_INST + 13] = 8.0;
+        a[i * MB_INST + 14] = -1.0;
+        a[i * MB_INST + 15] = 1.0;
+        a[i * MB_INST + 21] = 6.0;
+      }
+      rect_at(a + 4 * MB_INST, 40, 8, 120, 12, 0, 0.4, 0.6, 1.0, 0);
+      a[4 * MB_INST + 11] = 0.0;
+      rect_at(a + 5 * MB_INST, 0, 0, 0, 0, 12, 0, 0, 0, 0);
+      mb_render_set_fixed_dt(1.0 / 60.0);
+      glass_forget();
+      mb_host_render_dirty(0, 0, 400, 300);
+      mb_render_present(a, 6, 0.95, 0.95, 0.95);
+      present_drain();
+      a[8] = 0.93;
+      mb_host_render_dirty(0, 0, 400, 300);
+      mb_render_present(a, 6, 0.95, 0.95, 0.95);
+      present_drain();
+      CHECK(mb_render_adaptive_settling());
+      a[4 * MB_INST + 11] = 0.5;
+      a[5 * MB_INST + 12] = 1.0;
+      mb_host_render_dirty(32, 0, 144, 32);
+      mb_render_present(a, 6, 0.95, 0.95, 0.95);
+      present_drain();
+      slots_invalidate();
+      CHECK(canvas_as_whole());
+      mb_render_set_fixed_dt(0.0);
+      glass_forget();
+    }
+
     // A group kept by the host (groups.h) drawn out by a header, straight into the floats: each instance moved in
     // doubles, then made a float, as the app's own instance moved there would be.
     double kept[MB_INST];

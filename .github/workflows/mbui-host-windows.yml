@@ -14,6 +14,7 @@ on:
       - "libs/mbui/src/kitdemo/gallery/a11ycheck.mbt"
       - "libs/mbui/src/kitdemo/gallery/fontscalecheck.mbt"
       - "libs/mbui/src/host/win_*"
+      - "libs/mbui/src/host/glass_damage.h"
       - "libs/mbui/src/host/win.h"
       - "libs/mbui/src/host/log_files.h"
       - "libs/mbui/scripts/win_logs_test.c"

@@ -9,6 +9,7 @@ on:
   pull_request:
     paths: &paths
       - "libs/mbui/src/host/win_render.cpp"
+      - "libs/mbui/src/host/glass_damage.h"
       - "libs/mbui/src/host/win_text.cpp"
       - "libs/mbui/src/host/win_image.cpp"
       - "libs/mbui/scripts/win.sh"

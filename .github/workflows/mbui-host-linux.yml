@@ -46,6 +46,7 @@ on:
       - "libs/mbui/src/ui/drop.mbt"
       - "libs/mbui/src/ui/messages.mbt"
       - "libs/mbui/src/host/gles_render.h"
+      - "libs/mbui/src/host/glass_damage.h"
       - "libs/mbui/src/host/frame_mail.h"
       - "libs/mbui/scripts/gles_render_test.c"
       - "libs/mbui/src/host/corner_sl.h"

@@ -1154,6 +1154,65 @@ int main(void) {
     target_fb = saved_target;
   }
 
+  // A selection changes shape data while two adaptive glasses share a backdrop. Each host-added settle
+  // region must redraw the complete shared capture, so no previous glass or caret enters the new blur.
+  {
+    double a[6 * MB_INST];
+    rect_at(a, 0, 0, W, H, 0, 0.95, 0.95, 0.95, 0);
+    rect_at(a + MB_INST, 14, 54, 40, 3, 0, 0.1, 0.1, 0.1, 0);
+    rect_at(a + 2 * MB_INST, 10, 29, 35, 8, 6, 0.99, 0.99, 0.99, -1);
+    a[2 * MB_INST + 4] = 4.0;
+    a[2 * MB_INST + 6] = 1.0;
+    a[2 * MB_INST + 7] = 4.0;
+    a[2 * MB_INST + 11] = 0x67 / 255.0;
+    a[2 * MB_INST + 13] = 8.0;
+    a[2 * MB_INST + 14] = -1.0;
+    a[2 * MB_INST + 15] = 1.0;
+    a[2 * MB_INST + 21] = 6.0;
+    rect_at(a + 3 * MB_INST, 8, 45, 84, 23, 6, 0.99, 0.99, 0.99, -1);
+    a[3 * MB_INST + 4] = 8.0;
+    a[3 * MB_INST + 6] = 1.0;
+    a[3 * MB_INST + 7] = 4.0;
+    a[3 * MB_INST + 11] = 0x67 / 255.0;
+    a[3 * MB_INST + 13] = 8.0;
+    a[3 * MB_INST + 14] = -1.0;
+    a[3 * MB_INST + 15] = 1.0;
+    a[3 * MB_INST + 21] = 6.0;
+    rect_at(a + 4 * MB_INST, 10, 2, 30, 3, 0, 0.4, 0.6, 1.0, 0);
+    a[4 * MB_INST + 11] = 0.0;
+    rect_at(a + 5 * MB_INST, 0, 0, 0, 0, 12, 0, 0, 0, 0);
+    glass_forget();
+    gl_set_fixed_dt(1.0 / 60.0);
+    gl_present(a, 6, 0.95, 0.95, 0.95);
+    gl_dirty_add(0, 0, W, H);
+    a[8] = 0.93;
+    gl_present(a, 6, 0.95, 0.95, 0.95);
+    CHECK(gl_adaptive_settling());
+    a[4 * MB_INST + 11] = 0.5;
+    a[5 * MB_INST + 12] = 1.0;
+    gl_dirty_add(8, 0, 36, 8);
+    gl_present(a, 6, 0.95, 0.95, 0.95);
+    slots_invalidate();
+    CHECK(surface_as_whole(surface));
+    gl_set_fixed_dt(0.0);
+    glass_forget();
+  }
+
+  // Captures reached through another capture are closed too, including every shape of a merged liquid group.
+  {
+    float f[4 * MB_INST] = {0};
+    const float x[] = {70, 10, 40, 160};
+    const float id[] = {-2, -1, -1, -3};
+    for (int i = 0; i < 4; i++) {
+      float *a = f + i * MB_INST;
+      a[0] = x[i]; a[1] = 40; a[2] = 10; a[3] = 10; a[5] = 6; a[20] = id[i];
+    }
+    f[MB_INST + 23] = 8;
+    double r[][4] = {{12, 42, 1, 1}};
+    CHECK(mb_glass_damage_expand(f, 4, r, 1, 200, 100, 1));
+    CHECK(r[0][0] <= 0 && r[0][0] + r[0][2] >= 84 && r[0][0] + r[0][2] < 150);
+  }
+
   if (!failed) printf("gles_render: ok\n");
   return failed;
 }

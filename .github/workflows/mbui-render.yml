@@ -19,6 +19,7 @@ on:
       - "libs/mbui/src/ui/smooth.mbt"
       - "libs/mbui/src/host/corner*"
       - "libs/mbui/src/host/contained.h"
+      - "libs/mbui/src/host/glass_damage.h"
       - "libs/mbui/goldens/render/**"
       - "libs/mbui/scripts/render_offscreen.sh"
       - ".github/workflows/mbui-render.yml"
@@ -37,6 +38,7 @@ on:
       - "libs/mbui/src/ui/smooth.mbt"
       - "libs/mbui/src/host/corner*"
       - "libs/mbui/src/host/contained.h"
+      - "libs/mbui/src/host/glass_damage.h"
       - "libs/mbui/goldens/render/**"
   workflow_dispatch:
 
