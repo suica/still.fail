@@ -12,7 +12,7 @@ pub fn glass_lift_surface(
   v : @view.View,
   progress : () -> Double,
   flat_ground? : (() -> Int64)? = None,
-  glass? : () -> @ui.Glass = glass_menu,
+  glass? : () -> @ui.Glass = fn() { glass_menu() },
   radius? : Double = row_corner,
   shadow? : () -> (Double, Double, Int64) = fn() {
     (held_raised.sigma, held_raised.dy, held_raised.color)

@@ -492,6 +492,9 @@ export function linkTarget(url: string, origin: string): J {
   // station's page.
   if (s.length === 6 && s[0] === "w" && s[2] === "s" && s[4] === "login" && s[5] !== "") return { opens: "login", workspace: s[1], station: s[3], login: s[5] };
   if (s.length === 4 && s[0] === "o") {
+    if (s[3].startsWith("profile:") || s[3].startsWith("billed:")) {
+      return { opens: "profiles", workspace: s[1], station: s[2] };
+    }
     const service = param(u.query, "service");
     return { opens: "item", workspace: s[1], station: s[2], session: s[3], service: service !== null && service !== "" ? service : null, ...historyOf(u.query), ...messageOf(u.query) };
   }

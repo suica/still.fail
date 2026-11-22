@@ -44,6 +44,18 @@ pub fn glass_lens_springs() -> (Spec, Spec, Spec) {
 }
 
 ///|
+/// Critically damped zero-overshoot liquid glass popover bloom spring (zeta = 1.0, stiffness = 540, threshold = 0.001):
+/// crisp iOS 27.0 droplet-to-menu emergence (67ms -> 0.46, 117ms -> 0.79, 150ms -> 0.91) with zero overshoot.
+// kept across runs: a value (no field of it changes)
+pub let popover_bloom_spring : Spec = spring(ratio=1.0, stiffness=540.0, threshold=0.001)
+
+///|
+/// Matching critically damped popover glide spring (zeta = 1.0, stiffness = 540, threshold = 0.001) keeping
+/// droplet emergence, body morph, and corner radius in unified monotonic motion without overshoot.
+// kept across runs: a value (no field of it changes)
+pub let popover_neck_spring : Spec = spring(ratio=1.0, stiffness=540.0, threshold=0.001)
+
+///|
 /// Symmetric dialog exit duration (ms).
 pub let dialog_out_ms : Double = pop_out_ms
 

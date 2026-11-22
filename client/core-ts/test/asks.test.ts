@@ -35,6 +35,9 @@ test("still_fail_links_open_in_the_app_and_others_do_not", () => {
   assert.deepEqual(linkTarget("https://app.still.fail/w/ws1/s/st1/adb", cloud), { opens: "adbShare", workspace: "ws1", station: "st1" });
   assert.deepEqual(linkTarget("https://app.still.fail/w/ws1/s/st1/profiles", cloud), { opens: "profiles", workspace: "ws1", station: "st1" });
   assert.deepEqual(linkTarget("/w/ws1/s/st1/profiles", cloud), { opens: "profiles", workspace: "ws1", station: "st1" });
+  assert.deepEqual(linkTarget("/o/ws1/st1/profile:sh-1", cloud), { opens: "profiles", workspace: "ws1", station: "st1" });
+  assert.deepEqual(linkTarget("https://app.still.fail/o/ws1/st1/profile%3Ash-1", cloud), { opens: "profiles", workspace: "ws1", station: "st1" });
+  assert.deepEqual(linkTarget("/o/ws1/st1/billed:claude", cloud), { opens: "profiles", workspace: "ws1", station: "st1" });
   assert.deepEqual(linkTarget("https://app.still.fail/w/ws1/s/st1/login/l-3", cloud), { opens: "login", workspace: "ws1", station: "st1", login: "l-3" });
   assert.equal(linkTarget("https://app.still.fail/w/ws1/s/st1/login/", cloud), null);
   assert.deepEqual(linkTarget("https://app.still.fail/w/ws1/s/st1/services/j-1", cloud), { opens: "service", workspace: "ws1", station: "st1", service: "j-1" });

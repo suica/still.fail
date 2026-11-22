@@ -218,7 +218,7 @@ export class Attention implements Owner {
           return Effect.succeed(c.title === null || c.workspace === null ? { show } : { show, title: attend.titled(c.workspace, c.title, (w) => names.get(w) ?? null) });
         }
         case "bring":
-          return Effect.as(core.stations.bringPushed(c.station, c.session, c.seq), null);
+          return Effect.as(Effect.andThen(core.stations.bringPushed(c.station, c.session, c.seq), core.data.written), null);
       }
     };
     handlers.pushRegister = (_inner, call) => {

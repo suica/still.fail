@@ -147,9 +147,7 @@ test "a panel's body holding nothing takes none of its room; holding something, 
     #|dialog, empty:
     #|rect 40,40 720x32 3907312895
     #|rect 0,0 800x600 320215859
-    #|rect 140,217.5 520x165 4294967295
     #|rect 593,324.5 41x32 606546943
-    #|rect 140,217.5 520x165 0
     #|words 打开@387,46 26x20 a1
     #|words 好@607,330.5 13x20 a1
     #|words 一个@164,243.5 44x30 a1
@@ -157,9 +155,7 @@ test "a panel's body holding nothing takes none of its room; holding something, 
     #|dialog, holding words:
     #|rect 40,40 720x32 3907312895
     #|rect 0,0 800x600 320215859
-    #|rect 140,199.5 520x201 4294967295
     #|rect 593,342.5 41x32 606546943
-    #|rect 140,199.5 520x201 0
     #|words 打开@387,46 26x20 a1
     #|words 好@607,348.5 13x20 a1
     #|words 一个@164,225.5 44x30 a1

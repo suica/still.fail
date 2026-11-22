@@ -78,6 +78,8 @@ struct FakeHost {
   mut thermal_throttled : Bool
   // the person's setting for motion: reduced (Tester::set_reduce_motion; or the environment's MBUI_REDUCE_MOTION=1)
   mut reduce_motion : Bool
+  // the display's refresh rate in Hz (0: unknown, default in Tester)
+  mut display_hz : Double
   logs : Array[String]
   // images: sources the test made up, with their size in pixels; loads
   // asked for (source, max_px); decodes, ready from the next frame on

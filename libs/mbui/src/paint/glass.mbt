@@ -42,6 +42,10 @@ pub(all) struct Glass {
   strength : Double
   // frosted: progressive / variable blur modulated by the node's `View::fades` ramp (0 -> blur, 0 -> tint/sat)
   progressive : Bool
+  // liquid auto-merge layer (> 0 participates in framework same-layer proximity fusion; 0 keeps manual adjacency)
+  layer : Int
+  // physical edge-gap break threshold (pt) for same-layer liquid fusion (<= 0 defaults to merge * 0.25)
+  break_gap : Double
 }
 
 ///|
@@ -80,6 +84,8 @@ pub fn Glass::frosted(
     zoom: 1.0,
     strength: dclamp(strength, 0.0, 1.0),
     progressive,
+    layer: 0,
+    break_gap: 0.0,
   }
 }
 
@@ -111,6 +117,8 @@ pub fn Glass::liquid(
   spot? : (Double, Double)? = None,
   zoom? : Double = 1.0,
   strength? : Double = 1.0,
+  layer? : Int = 0,
+  break_gap? : Double = 0.0,
 ) -> Glass {
   {
     blur,
@@ -133,6 +141,8 @@ pub fn Glass::liquid(
     zoom,
     strength: dclamp(strength, 0.0, 1.0),
     progressive: false,
+    layer,
+    break_gap,
   }
 }
 
@@ -194,4 +204,22 @@ pub fn Glass::clear(
     zoom~,
     strength~,
   )
+}
+
+///|
+/// Foreground optical lens (`kind == 8`) applied to a node's child subtree: offscreen Gaussian defocus blur (`blur`,
+/// pt), quarter-circle bevel refraction (`refraction` and `bezel`, pt), and opacity (`alpha`). When `blur <= 0.05 &&
+/// refraction <= 0.05` (`ContentLens::none()`), zero extra instances or GPU passes are emitted at rest.
+#derive(Eq, Debug)
+pub(all) struct ContentLens {
+  blur : Double
+  refraction : Double
+  bezel : Double
+  alpha : Double
+}
+
+///|
+/// Inactive foreground lens (zero blur, zero refraction, full alpha): zero-overhead resting default.
+pub fn ContentLens::none() -> ContentLens {
+  { blur: 0.0, refraction: 0.0, bezel: 0.0, alpha: 1.0 }
 }

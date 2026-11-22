@@ -613,18 +613,14 @@ fn composer_node_of(
 }
 
 ///|
-/// Minimal soft top-fade seam seal pinned to the bottom of `foot`, covering only the `composer_foot_at` gap below the
-/// composer plus `composer_seam_fade` pt of upward feathering so the composer body and floating pill stay 100% open to
-/// transparent liquid glass refraction and adaptive flipping. Reuses `p.bg` with `alpha(254/255)` so `Node::covers`
-/// never blocks selection or wheel scrolling beside the composer and no new palette color is introduced.
+/// The short top-fade seam seal used while the soft keyboard is down. Reuses `p.bg` with `alpha(254/255)` so
+/// `Node::covers` never blocks selection or wheel scrolling beside the composer and no new palette color is introduced.
 let composer_seam_fade : Double = 18.0
 
 ///|
-/// While the soft keyboard is up (someone writing in it on a phone), what the chat holds fades out behind the composer
-/// too, so a picture or a busy message passing under its glass does not drown what is being written: the page's own
-/// ground, as good as solid at the foot and clear `composer_backdrop_fade` above the seam under the composer. It comes
-/// and goes with the keyboard (`composer_backdrop_in_ms`, `composer_backdrop_out_ms`), and is not there with keyboard
-/// and mouse, where the glass stays open as it was made to be.
+/// What the chat holds fades out behind the composer, so a picture or a busy message passing under its glass does not
+/// drown what is being written: the page's own ground, as good as solid at the foot and clear `composer_backdrop_fade`
+/// above the seam. With a soft keyboard it comes and goes with the keyboard; with keyboard and mouse it stays there.
 let composer_backdrop_fade : Double = 220.0
 
 ///|
@@ -643,6 +639,7 @@ fn composer_foot_scrim_node(
   foot.box(fn(scrim) {
     scrim
     .over(Is(true))
+    .presses(Is(false))
     .width_share(Is(1.0))
     .height_share(Is(1.0))
     .lies_along(Is(End))
@@ -660,11 +657,12 @@ fn composer_foot_scrim_node(
         .laid_nowhere(By(fn() { @ui.system_tabletop() is Some(_) }))
         |> ignore
     }
+    let seam_fade = if @sf.soft_keyboard() { composer_seam_fade } else { composer_backdrop_fade }
     scrim.box(fn(band) {
       band
       .width_share(Is(1.0))
-      .height(By(fn() { Some(seam_h() + 6.0 + composer_seam_fade) }))
-      .fades(Is((0.0, composer_seam_fade, 0.0, 0.0)))
+      .height(By(fn() { Some(seam_h() + 6.0 + seam_fade) }))
+      .fades(Is((0.0, seam_fade, 0.0, 0.0)))
       .points(Is(false))
       |> ignore
       band.box(fn(fill) {
@@ -679,8 +677,7 @@ fn composer_foot_scrim_node(
       |> ignore
     })
     |> ignore
-    // (the keyboard's fade: composer_backdrop_fade's, eased in as it comes up and out as it goes; nothing of it with
-    // keyboard and mouse, where no keyboard comes up)
+    // (the soft keyboard's fade: eased in as it comes up and out as it goes; the band above handles keyboard and mouse)
     if !@sf.soft_keyboard() {
       return
     }

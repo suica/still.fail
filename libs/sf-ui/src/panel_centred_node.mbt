@@ -8,6 +8,26 @@
 // closes it with what it was given (nothing told).
 
 ///|
+/// Single-layer iOS 26/27 70% luminous liquid glass for modal dialogs (`panel_centred_node`, `confirm_node`,
+/// `switcher_node`), degrading cleanly to opaque `panel_ground()` under `MBUI_GLASS=solid`.
+pub fn dialog_glass() -> @ui.Glass {
+  let g = @lg.liquid_dialog_glass(solid=panel_ground())
+  // In Light mode, raise dialog veil density to 82% (`0xD1`) so muted secondary text (`#535559`) inside centred
+  // dialogs over dimmed or high-contrast page backdrops stays >= 4.5:1 WCAG AA (~4.70:1).
+  if theme().dark {
+    g
+  } else {
+    { ..g, tint: 0xFDFCFDD1L }
+  }
+}
+
+///|
+/// 1pt hairline border for floating liquid glass overlays degraded to opaque solid under `MBUI_GLASS=solid`.
+pub fn overlay_solid_edge() -> (Double, Int64) {
+  @lg.liquid_overlay_solid_edge()
+}
+
+///|
 /// A centred panel `x` in `parent` while `open()` (going over pop_out_ms once not); `close`: what what it holds is given to close it; `cancel` as it is closed by its close button,
 /// Escape, back or a press outside. `shown`, `gone`: as dialog_layer_node's.
 fn panel_centred_node(
@@ -63,9 +83,10 @@ fn panel_centred_node(
       // (dialog_box: 24 over its title, 24 in at its sides; each part out to them, the padding inside it)
       .padding(Is(if top_share > 0.0 { (top_pad, top_pad, top_pad, top_pad) } else { (dialog_pad, dialog_pad, dialog_pad, 0.0) }))
       .radius(Is(dialog_r))
-      .ground(By(fn() { panel_ground() }))
-      .edge(By(fn() { (1.0, theme().color(Line)) }))
-      .shadow(By(fn() { (dialog_shadow, dialog_shadow_y, library_theme().p.shadow) }))
+      .glass(By(fn() { Some(dialog_glass()) }))
+      .edge(By(fn() { if d.glass_solid() { (1.0, theme().color(Line)) } else { (0.0, 0L) } }))
+      .shadow(By(glass_overlay_shadow))
+      .shadow_outside(Is(true))
       .clips(Is(true))
       .alpha(By(fn() { look().alpha }))
       .scale(By(fn() { look().sx }))

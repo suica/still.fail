@@ -354,3 +354,49 @@ test "phone: mid-slide, pages, overlays, and menu return to Home on back" {
     assert_true(app.nav.top() == Home, msg="\{opens} back -> Home")
   }
 }
+
+///|
+test "phone: tapping a notification for the currently open chat keeps its live page and jumps to seq" {
+  new_run()
+  let base = fixture("home")
+  let chat_left_leaves : Ref[Int] = Ref(0)
+  let focus_left_calls : Ref[Int] = Ref(0)
+  let src : Source = {
+    ..base,
+    leave: fn(name, params, how) {
+      if name == "chat" && @sfbase.text(Some(Json::object(params)), "session") == "s-c2" {
+        chat_left_leaves.val = chat_left_leaves.val + 1
+      }
+      (base.leave)(name, params, how)
+    },
+    call: fn(name, params, done) {
+      if name == "client.focus" && @sfbase.field(Some(params), "left") is Some(_) {
+        focus_left_calls.val = focus_left_calls.val + 1
+      }
+      (base.call)(name, params, done)
+    },
+  }
+  let t = @ui.Tester::new(fn(c) { view(c, src) }, tree=app_tree(src), w=390.0, h=844.0, platform=2)
+  t.check_looks(false)
+  t.run_for(@ui.move_most_ms)
+  open_chat({ station: "ws1/st1", session: "s-c2", title: "另一个", station_name: "Willow" })
+  t.draw()
+  t.run_for(@ui.move_most_ms)
+  assert_true(app.nav.top() is Chat(_), msg="currently on s-c2")
+  chat_left_leaves.val = 0
+  focus_left_calls.val = 0
+
+  @ui.notice_show(channel="消息", tag="same-chat", title="通知", body="同对话通知", opens="/o/ws1/st1/s-c2?message=2\n2")
+  assert_true(t.tap_notice("同对话通知"))
+  t.draw()
+  // Before chat page consumes go_tos, or immediately after open_target_now:
+  // tapping same chat notice must not trigger chat_left or wipe live chat subscription.
+  t.run_for(@ui.move_most_ms)
+  assert_eq(chat_left_leaves.val, 0, msg="same-chat notice must not leave active chat topic")
+  assert_eq(focus_left_calls.val, 0, msg="same-chat notice must not emit client.focus left")
+  assert_true(app.nav.top() is Chat(r) && r.session == "s-c2", msg="still on s-c2")
+  assert_true(t.takes_back(), msg="same-chat notice keeps back to Home")
+  t.back()
+  t.run_for(@ui.move_most_ms)
+  assert_true(app.nav.top() == Home, msg="back returns to Home")
+}

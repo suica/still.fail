@@ -1031,6 +1031,31 @@ int main(void) {
     CHECK(gl_adaptive_settling() == 0);
     gl_set_fixed_dt(0.0);
     glass_forget();
+    // Wave 4B v17: foreground optical lens (kind == 8): offscreen Gaussian defocus + spherical bevel refraction + SDF clip
+    double k8[3 * MB_INST];
+    rect_at(k8, 0, 0, W, H, 0, 1.0, 1.0, 1.0, 0);
+    rect_at(k8 + MB_INST, 15, 10, 70, 60, 8, 1.0, 1.0, 1.0, 0);
+    k8[MB_INST + 4] = 16;
+    k8[MB_INST + 7] = 3.0;   // blur = 3pt
+    k8[MB_INST + 11] = 1.0;  // alpha = 1
+    k8[MB_INST + 12] = 1.0;  // child_n = 1
+    k8[MB_INST + 13] = 18.0; // bezel = 18pt
+    k8[MB_INST + 14] = 14.0; // refraction = 14pt
+    k8[MB_INST + 15] = 1.0;
+    k8[MB_INST + 36] = 16; k8[MB_INST + 37] = 16; k8[MB_INST + 38] = 16; k8[MB_INST + 39] = 16;
+    rect_at(k8 + 2 * MB_INST, 38, 28, 24, 24, 0, 1.0, 0.0, 0.0, 0);
+    gl_present(k8, 3, 1.0, 1.0, 1.0);
+    unsigned char *px_k8 = pixels_of_fb(surface);
+    // RGBA at 2x (y flipped): center (50,40)->(100,80), blur halo (35,40)->(70,80), outside SDF (5,40)->(10,80)
+    unsigned char *k8_ctr = px_k8 + ((fb_h - 1 - 80) * fb_w + 100) * 4;
+    unsigned char *k8_halo = px_k8 + ((fb_h - 1 - 80) * fb_w + 70) * 4;
+    unsigned char *k8_out = px_k8 + ((fb_h - 1 - 80) * fb_w + 10) * 4;
+    printf("gles_render: kind8 lens ctr=%d,%d,%d halo=%d,%d,%d out=%d,%d,%d\n",
+           k8_ctr[0], k8_ctr[1], k8_ctr[2], k8_halo[0], k8_halo[1], k8_halo[2], k8_out[0], k8_out[1], k8_out[2]);
+    CHECK((int)k8_ctr[0] - (int)k8_ctr[2] > 120);
+    CHECK((int)k8_halo[0] - (int)k8_halo[2] > 20);
+    CHECK(abs((int)k8_out[0] - (int)k8_out[2]) <= 2 && k8_out[0] >= 250);
+    free(px_k8);
   }
 
   // A group the host keeps drawn out by its header straight into the floats: each instance moved in doubles, then
@@ -1267,6 +1292,239 @@ int main(void) {
     CHECK(mb_glass_damage_expand(f, 4, r, &rn, 200, 100, 1));
     CHECK(rn == 1);
     CHECK(r[0][0] <= 0 && r[0][0] + r[0][2] >= 84 && r[0][0] + r[0][2] < 150);
+  }
+
+  // Perf-29: (1) Stacked glass cache independence (top progressive blur + top liquid glass capsule + changing bottom
+  // content must produce 0 blur rebuilds, while changing content under top progressive blur rebuilds both identically
+  // to a fresh render); (2) GLES async PBO+fence same-side early stop within 4 frames; (3) progressive blur visible-box
+  // scissor & ramp boundary fast-path pixel equivalence.
+  {
+    double sg[5 * MB_INST];
+    // 0: full background
+    rect_at(sg, 0, 0, W, H, 0, 0.94, 0.94, 0.92, 0);
+    // 1: top content under progressive blur
+    rect_at(sg + 1 * MB_INST, 10, 4, 40, 10, 0, 0.85, 0.20, 0.20, 0);
+    // 2: bottom unrelated content (far below top glass & its blur margin)
+    rect_at(sg + 2 * MB_INST, 10, 62, 60, 10, 0, 0.20, 0.45, 0.90, 0);
+    // 3: top progressive frosted blur (kind 5, a[22] = -1, fade y from 14..22)
+    rect_at(sg + 3 * MB_INST, 0, 0, W, 22, 5, 0.96, 0.96, 0.96, -30);
+    sg[3 * MB_INST + 6] = 1.1;
+    sg[3 * MB_INST + 7] = 4.0;
+    sg[3 * MB_INST + 11] = 0.35;
+    sg[3 * MB_INST + 15] = 1.0;
+    sg[3 * MB_INST + 22] = -1.0;
+    sg[3 * MB_INST + 54] = 22.0;  // fade bottom end
+    sg[3 * MB_INST + 55] = 8.0;   // fade bottom length (y=0..14 full ramp=1, 14..22 ramp->0)
+    // 4: top liquid glass capsule stacked over the progressive blur
+    rect_at(sg + 4 * MB_INST, 12, 4, 44, 12, 6, 0.99, 0.99, 0.99, -31);
+    sg[4 * MB_INST + 4] = 6.0;
+    sg[4 * MB_INST + 6] = 1.0;
+    sg[4 * MB_INST + 7] = 2.0;
+    sg[4 * MB_INST + 11] = 0x67 / 255.0;
+    sg[4 * MB_INST + 13] = 8.0;
+    sg[4 * MB_INST + 14] = -1.0;
+    sg[4 * MB_INST + 15] = 1.0;
+    sg[4 * MB_INST + 21] = 4.0;
+
+    glass_forget();
+    gl_set_fixed_dt(1.0 / 60.0);
+    made = blurs_made;
+    gl_present(sg, 5, 0.94, 0.94, 0.92);
+    CHECK(blurs_made == made + 2);
+    CHECK(surface_as_fresh(surface));
+
+    // Mutate bottom unrelated rect across 3 frames: neither top progressive nor stacked liquid glass may re-blur.
+    for (int step = 0; step < 3; step++) {
+      sg[2 * MB_INST + 8] = 0.20 + 0.25 * (step + 1);
+      made = blurs_made;
+      gl_present(sg, 5, 0.94, 0.94, 0.92);
+      CHECK(blurs_made == made);
+      CHECK(surface_as_fresh(surface));
+    }
+
+    // Mutate content under the top progressive blur: both top progressive and stacked liquid glass must re-blur.
+    sg[1 * MB_INST + 9] = 0.80;
+    made = blurs_made;
+    gl_present(sg, 5, 0.94, 0.94, 0.92);
+    CHECK(blurs_made == made + 2);
+    CHECK(surface_as_fresh(surface));
+
+    // GLES async PBO+fence same-side early stop: light->light (0.94 -> 0.92) stops settling within 4 frames.
+    double es[3 * MB_INST];
+    rect_at(es, 0, 0, W, H, 0, 0.95, 0.95, 0.95, 0);
+    rect_at(es + MB_INST, 8, 28, 84, 16, 6, 253.0 / 255.0, 252.0 / 255.0, 253.0 / 255.0, -32);
+    es[MB_INST + 4] = 8.0;
+    es[MB_INST + 6] = 1.0;
+    es[MB_INST + 7] = 2.0;
+    es[MB_INST + 11] = 0x67 / 255.0;
+    es[MB_INST + 13] = 8.0;
+    es[MB_INST + 14] = -1.0;
+    es[MB_INST + 15] = 1.0;
+    rect_at(es + 2 * MB_INST, 16, 30, 20, 12, 10, 0.11, 0.11, 0.11, 0);
+    es[2 * MB_INST + 4] = 3.0;
+    es[2 * MB_INST + 12] = 0.1; es[2 * MB_INST + 13] = 0.5;
+    es[2 * MB_INST + 14] = 0.9; es[2 * MB_INST + 15] = 0.5;
+    es[2 * MB_INST + 21] = 50.0; es[2 * MB_INST + 22] = 36.0; es[2 * MB_INST + 23] = 16.0;
+    glass_forget();
+    gl_present(es, 3, 0.95, 0.95, 0.95);
+    CHECK(gl_adaptive_settling() == 0);
+    es[8] = 0.93; es[9] = 0.93; es[10] = 0.93;
+    gl_present(es, 3, 0.93, 0.93, 0.93);
+    CHECK(gl_adaptive_settling() == 1);
+    for (int s = 0; s < 4 && gl_adaptive_settling(); s++) {
+      gl_present(es, 3, 0.93, 0.93, 0.93);
+    }
+    CHECK(gl_adaptive_settling() == 0);
+    gl_set_fixed_dt(0.0);
+    glass_forget();
+  }
+
+  // Progressive blur small-radius anti-ghosting regression: 1pt and 1px dark vertical/horizontal strokes over
+  // a light background under blur=8.5, fade_h=68 progressive blur at both 2x and 1x scale must produce strictly
+  // unimodal profiles (no 9-tap comb ghosting / secondary dark peaks) and monotonically attenuate center contrast.
+  {
+    static const int scales[2] = {2, 1};
+    static const double v_ramps[6] = {0.06, 0.10, 0.14, 0.18, 0.24, 0.35};
+    static const double h_ramps[3] = {0.10, 0.18, 0.24};
+    GLuint pb_tex = 0, pb_fb = 0;
+    for (int si = 0; si < 2; si++) {
+      int sc = scales[si];
+      fb_w = W * sc;
+      fb_h = H * sc;
+      cur_w = W;
+      cur_h = H;
+      cur_scale = (double)sc;
+      if (pb_fb) { glDeleteFramebuffers(1, &pb_fb); pb_fb = 0; }
+      if (pb_tex) { glDeleteTextures(1, &pb_tex); pb_tex = 0; }
+      glGenTextures(1, &pb_tex);
+      glBindTexture(GL_TEXTURE_2D, pb_tex);
+      glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, fb_w, fb_h);
+      glGenFramebuffers(1, &pb_fb);
+      glBindFramebuffer(GL_FRAMEBUFFER, pb_fb);
+      glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, pb_tex, 0);
+      CHECK(glCheckFramebufferStatus(GL_FRAMEBUFFER) == GL_FRAMEBUFFER_COMPLETE);
+      target_fb = pb_fb;
+      canvas_ok = 0;
+
+      double widths[2] = {1.0, 1.0 / (double)sc};
+      int n_widths = (sc > 1) ? 2 : 1;
+      for (int wi = 0; wi < n_widths; wi++) {
+        double lw = widths[wi];
+        // 1) Vertical stroke across the entire fade band (y=0..75)
+        double pb[3 * MB_INST];
+        rect_at(pb, 0, 0, W, H, 0, 0.96, 0.96, 0.96, 0);
+        rect_at(pb + MB_INST, 50.0, 0.0, lw, H, 0, 0.05, 0.05, 0.05, 0);
+        rect_at(pb + 2 * MB_INST, 0, 0, W, 68.0, 5, 0.96, 0.96, 0.96, -40);
+        pb[2 * MB_INST + 6] = 1.0;
+        pb[2 * MB_INST + 7] = 8.5;
+        pb[2 * MB_INST + 11] = 0.15;
+        pb[2 * MB_INST + 15] = 1.0;
+        pb[2 * MB_INST + 22] = -1.0;
+        pb[2 * MB_INST + 54] = 68.0;
+        pb[2 * MB_INST + 55] = 68.0;
+        glass_forget();
+        gl_present(pb, 3, 0.96, 0.96, 0.96);
+        unsigned char *px = pixels_of_fb(pb_fb);
+        int prev_center = -1;
+        int first_center = -1;
+        int last_center = -1;
+        int mono_ok = 1;
+        int max_dip = 0;
+        for (int ri = 0; ri < 6; ri++) {
+          int py = (int)llround(68.0 * (1.0 - v_ramps[ri]) * (double)sc);
+          if (py < 0) py = 0;
+          if (py >= fb_h) py = fb_h - 1;
+          int row = fb_h - 1 - py;
+          int x0 = (int)floor(50.0 * (double)sc) - 2;
+          int x1 = (int)ceil((50.0 + lw) * (double)sc) + 2;
+          int xc = x0, min_l = 256;
+          for (int x = x0; x <= x1; x++) {
+            int l = px[(row * fb_w + x) * 4 + 1];
+            if (l < min_l) { min_l = l; xc = x; }
+          }
+          if (ri == 0) first_center = min_l;
+          last_center = min_l;
+          if (prev_center >= 0 && min_l < prev_center - 2) {
+            fprintf(stderr, "gles_render: prog-blur v-stroke center non-mono sc=%d lw=%.2f ramp=%.2f prev=%d cur=%d\n",
+                    sc, lw, v_ramps[ri], prev_center, min_l);
+            mono_ok = 0;
+          }
+          prev_center = min_l;
+          for (int dir = -1; dir <= 1; dir += 2) {
+            int max_seen = min_l;
+            for (int dx = 1; dx <= 12; dx++) {
+              int x = xc + dir * dx;
+              if (x < 0 || x >= fb_w) break;
+              int l = px[(row * fb_w + x) * 4 + 1];
+              if (max_seen - l > max_dip) max_dip = max_seen - l;
+              if (l < max_seen - 2) mono_ok = 0;
+              if (l > max_seen) max_seen = l;
+            }
+          }
+        }
+        printf("gles_render: prog-blur v-stroke sc=%d lw=%.2f first=%d last=%d max_dip=%d\n",
+               sc, lw, first_center, last_center, max_dip);
+        CHECK(mono_ok);
+        CHECK(last_center > first_center + 15);
+        free(px);
+
+        // 2) Horizontal strokes at representative small-radius ramps
+        int h_mono_ok = 1;
+        int h_max_dip = 0;
+        for (int ri = 0; ri < 3; ri++) {
+          double y_pt = 68.0 * (1.0 - h_ramps[ri]);
+          double hp[3 * MB_INST];
+          rect_at(hp, 0, 0, W, H, 0, 0.96, 0.96, 0.96, 0);
+          rect_at(hp + MB_INST, 10.0, y_pt, 80.0, lw, 0, 0.05, 0.05, 0.05, 0);
+          rect_at(hp + 2 * MB_INST, 0, 0, W, 68.0, 5, 0.96, 0.96, 0.96, -41);
+          hp[2 * MB_INST + 6] = 1.0;
+          hp[2 * MB_INST + 7] = 8.5;
+          hp[2 * MB_INST + 11] = 0.15;
+          hp[2 * MB_INST + 15] = 1.0;
+          hp[2 * MB_INST + 22] = -1.0;
+          hp[2 * MB_INST + 54] = 68.0;
+          hp[2 * MB_INST + 55] = 68.0;
+          glass_forget();
+          gl_present(hp, 3, 0.96, 0.96, 0.96);
+          unsigned char *hpx = pixels_of_fb(pb_fb);
+          int px_x = 50 * sc;
+          int y0 = (int)floor(y_pt * (double)sc) - 2;
+          int y1 = (int)ceil((y_pt + lw) * (double)sc) + 2;
+          int yc = y0, min_l = 256;
+          for (int y = y0; y <= y1; y++) {
+            int row = fb_h - 1 - y;
+            int l = hpx[(row * fb_w + px_x) * 4 + 1];
+            if (l < min_l) { min_l = l; yc = y; }
+          }
+          for (int dir = -1; dir <= 1; dir += 2) {
+            int max_seen = min_l;
+            for (int dy = 1; dy <= 10; dy++) {
+              int y = yc + dir * dy;
+              if (y < 0 || y >= fb_h) break;
+              int row = fb_h - 1 - y;
+              int l = hpx[(row * fb_w + px_x) * 4 + 1];
+              if (max_seen - l > h_max_dip) h_max_dip = max_seen - l;
+              if (l < max_seen - 2) h_mono_ok = 0;
+              if (l > max_seen) max_seen = l;
+            }
+          }
+          free(hpx);
+        }
+        printf("gles_render: prog-blur h-stroke sc=%d lw=%.2f max_dip=%d\n", sc, lw, h_max_dip);
+        CHECK(h_mono_ok);
+      }
+    }
+    if (pb_fb) glDeleteFramebuffers(1, &pb_fb);
+    if (pb_tex) glDeleteTextures(1, &pb_tex);
+    fb_w = W * S;
+    fb_h = H * S;
+    cur_w = W;
+    cur_h = H;
+    cur_scale = S;
+    target_fb = surface;
+    glBindFramebuffer(GL_FRAMEBUFFER, surface);
+    canvas_ok = 0;
+    glass_forget();
   }
 
   if (!failed) printf("gles_render: ok\n");

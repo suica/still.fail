@@ -95,6 +95,8 @@ pub fn decode_charset(Bytes, String) -> String?
 
 pub fn decode_text(Bytes, truncated? : Bool) -> (String, String)
 
+pub fn display_hz() -> Double
+
 pub fn draw_marks(Bytes, String) -> MarkedImage?
 
 pub fn drawn_pixels(Int32, Int32, Int32, Int32, FixedArray[Byte]) -> Bool
@@ -1051,6 +1053,7 @@ pub(open) trait Host {
   fn frames_dropped(Self) -> Int32 = _
   fn cpu_ms(Self) -> Double = _
   fn thread_cpu_ms(Self) -> Double = _
+  fn display_hz(Self) -> Double = _
   fn env(Self, String) -> String = _
   fn set_app_state(Self, FuncRef[(Int32) -> Unit]) -> Unit = _
   fn system_dark(Self) -> Bool = _

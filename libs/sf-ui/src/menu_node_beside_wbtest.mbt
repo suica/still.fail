@@ -198,6 +198,7 @@ test "a menu closed half way in draws back from where it got to, never first who
 /// …) under it, which has not the room there and goes above it, grown from its foot; open, `pop_ms` on.
 fn foot_menu_tester(rows : Int, open : @signals.Signal[Bool]) -> @ui.Tester {
   let t = @ui.Tester::new(fn(_c) {  }, w=400.0, h=800.0, platform=0)
+  @ui.set_glass_solid(Some(true))
   t.check_looks(false)
   @ui.set_view_app(fn(root) {
     root.padding(Is((100.0, 740.0, 0.0, 0.0))) |> ignore
@@ -256,6 +257,7 @@ fn foot_menu_drawn(first : String) -> ((Double, Double)?, (Double, Double)?) {
 
 ///|
 test "a tall menu gone above what opened it comes in from its foot kept within pop_max_shift: its top row 8 or less from where it lands on its first frame, in and out smoothly" {
+  defer { @ui.set_glass_solid(None) }
   let open = @signals.signal(false)
   let t = foot_menu_tester(18, open)
   open.set(true)
@@ -312,6 +314,7 @@ test "a tall menu gone above what opened it comes in from its foot kept within p
 
 ///|
 test "a short menu gone above what opened it comes in at pop_in's own 0.97, within pop_max_shift as it is" {
+  defer { @ui.set_glass_solid(None) }
   let open = @signals.signal(false)
   let t = foot_menu_tester(3, open)
   open.set(true)

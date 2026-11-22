@@ -152,6 +152,9 @@ public class MBView extends GLSurfaceView implements GLSurfaceView.Renderer {
     @Override
     public void onPause() {
         paused = true;
+        if (settleScheduled.getAndSet(false)) {
+            Host.main.post(() -> Choreographer.getInstance().removeFrameCallback(settleVsync));
+        }
         pacer.setImeMoving(false);
         // queued before the GL thread pauses (it takes its queue first): its context still current there
         trim();
@@ -556,6 +559,26 @@ public class MBView extends GLSurfaceView implements GLSurfaceView.Renderer {
         if (mail.handOver(shows, MBText.placed)) requestRender();
     }
 
+    /** VSync-paced settle wakeup for adaptive glass (main thread Choreographer -> GLThread requestRender). */
+    private final java.util.concurrent.atomic.AtomicBoolean settleScheduled = new java.util.concurrent.atomic.AtomicBoolean();
+    private final Choreographer.FrameCallback settleVsync = t -> {
+        settleScheduled.set(false);
+        if (!paused && Host.view == this && Native.adaptiveSettling()) requestRender();
+    };
+
+    private void scheduleAdaptiveSettle() {
+        if (paused) return;
+        if (settleScheduled.compareAndSet(false, true)) {
+            Host.main.post(() -> {
+                if (paused || Host.view != this) {
+                    settleScheduled.set(false);
+                    return;
+                }
+                Choreographer.getInstance().postFrameCallback(settleVsync);
+            });
+        }
+    }
+
     /** The GL thread's time drawing the last frame (ns), told to the system with the app's (frameWorked). */
     private volatile long glWorked;
 
@@ -619,7 +642,7 @@ public class MBView extends GLSurfaceView implements GLSurfaceView.Renderer {
         } else {
             Native.redraw();
         }
-        if (Native.adaptiveSettling()) requestRender();
+        if (Native.adaptiveSettling()) scheduleAdaptiveSettle();
         // what the frames it took the place of on the screen used, and this one does not: let go now
         mail.runAll(t.retire);
         showAt(t.shows);

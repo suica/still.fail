@@ -25,7 +25,7 @@ test "the switch's focus ring surrounds its track and both Space and Enter activ
     assert_true(s.check is Some(Off))
     let (x, y, w, h) = s.rect
     if platform == 2 {
-      assert_eq((w, h), (64.0, 44.0))
+      assert_eq((w, h), (64.0, 28.0))
     }
     t.key(@ui.key_tab)
     t.frame()

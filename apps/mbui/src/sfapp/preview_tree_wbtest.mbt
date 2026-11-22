@@ -2278,21 +2278,21 @@ test "viewer on the tree, a wide window, motion reduced: its bars hidden, the wa
 ///|
 test "viewer on the tree, a wide window: the way to the picture after drawn with its shadow under its frosted glass (Base, outside it), as the old one is" {
   let t = preview_tester("step", w=1280.0, platform=0)
-  let (blur, _) = @ui.Shadow::blur_y(Base)
+  let (blur, _, _) = @sf.glass_control_shadow()
   let disc = @ui.Space::px(S10)
   let cast = t.drawn_shadows().filter(fn(s) { s.2 == disc && s.0 > 640.0 })
   assert_eq(cast.length(), 1, msg="its shadow: \{Repr(t.drawn_shadows())}")
-  assert_eq(cast[0].5, blur, msg="Base's blur")
+  assert_eq(cast[0].5, blur, msg="glass_control_shadow's blur")
 }
 
 ///|
 test "viewer on the tree, a wide window, transparency reduced: the way to the picture after on its glass's solid ground, no glass, its shadow under it (Base, one), as the old one is; back again, its glass" {
   let t = preview_tester("step", w=1280.0, platform=0)
   let disc = @ui.Space::px(S10)
-  let (blur, _) = @ui.Shadow::blur_y(Base)
+  let (blur, _, _) = @sf.glass_control_shadow()
   let glass_there = fn() { t.drawn_glass().filter(fn(g) { g.2 == disc && g.0 > 640.0 }).length() }
   let solid_there = fn() {
-    t.drawn_rects().filter(fn(r) { r.2 == disc && r.0 > 640.0 }).length()
+    t.drawn_rects().filter(fn(r) { (r.4 & 0xFFL) != 0L && r.2 == disc && r.0 > 640.0 }).length()
   }
   let shadows = fn() { t.drawn_shadows().filter(fn(s) { s.2 == disc && s.0 > 640.0 }) }
   t.set_reduce_transparency(true)

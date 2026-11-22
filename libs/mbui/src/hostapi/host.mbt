@@ -106,6 +106,7 @@ pub(open) trait Host {
   frames_dropped(Self) -> Int = _
   cpu_ms(Self) -> Double = _
   thread_cpu_ms(Self) -> Double = _
+  display_hz(Self) -> Double = _
   env(Self, String) -> String = _
   set_app_state(Self, FuncRef[(Int) -> Unit]) -> Unit = _
   system_dark(Self) -> Bool = _
@@ -820,6 +821,11 @@ impl Host with cpu_ms(_) {
 ///|
 impl Host with thread_cpu_ms(_) {
   -1.0
+}
+
+///|
+impl Host with display_hz(_) {
+  0.0
 }
 
 ///|
@@ -2461,6 +2467,12 @@ pub fn cpu_ms() -> Double {
 /// from real CPU work.
 pub fn thread_cpu_ms() -> Double {
   current.val.thread_cpu_ms()
+}
+
+///|
+/// The display's refresh rate in Hz (0.0: unknown or fake host).
+pub fn display_hz() -> Double {
+  current.val.display_hz()
 }
 
 ///|

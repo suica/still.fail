@@ -109,7 +109,6 @@ pub fn marks_foot_over() -> Double {
 fn marks_tools_node(col : @view.View, tips : @sf.TipLayer) -> Unit {
   let ink = marks_ink
   let round : @view.Live[Double] = Is(picture_key)
-  let glass = fn() { Some(dark_glass()) }
   col.lines_up(Is(Some(Middle))).gap(Is(12.0)).padding(Is((0.0, 0.0, 0.0, 8.0))) |> ignore
   col.show(
     fn() {
@@ -117,13 +116,11 @@ fn marks_tools_node(col : @view.View, tips : @sf.TipLayer) -> Unit {
       marking.palette
     },
     fn(row) {
-      row
+      @sf.glass_capsule_node(row, radius=Some(20.0), dark=true)
       .row(Is(true))
       .lines_up(Is(Some(Middle)))
       .padding(Is((4.0, 4.0, 4.0, 4.0)))
       .gap(Is(2.0))
-      .radius(Is(20.0))
-      .glass(By(glass))
       |> ignore
       // (the colours to pick one of: a radio group made of the row itself)
       @sf.color_swatches_node(
@@ -139,14 +136,12 @@ fn marks_tools_node(col : @view.View, tips : @sf.TipLayer) -> Unit {
     },
   )
   col.box(fn(row) {
-    row
+    @sf.glass_capsule_node(row, radius=Some(picture_bar_corner), dark=true)
     .row(Is(true))
     .lines_up(Is(Some(Middle)))
     .height(Is(Some(44.0)))
     .padding(Is((6.0, 0.0, 6.0, 0.0)))
     .gap(Is(2.0))
-    .radius(Is(picture_bar_corner))
-    .glass(By(glass))
     |> ignore
     for x in [(Select, "cursor", "select"), (Rect, "square", "rect"), (Arrow, "arrow-up-right", "arrow"), (Pen, "scribble", "pen"), (Words, "text", "text")] {
       let (tool, icon, name) = x

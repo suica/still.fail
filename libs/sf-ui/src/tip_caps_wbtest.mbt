@@ -56,10 +56,11 @@ test "what floats: its line the theme's; in the dark the raised grey with a tigh
 ///|
 /// A window with two buttons side by side, each with a tip, the first's of keys `keys` (an action's, said by
 /// set_shortcuts), dark or light; the pointer resting on the first.
-fn caps_tester(dark : Bool, keys : String) -> @ui.Tester raise {
+fn caps_tester(dark : Bool, keys : String, solid? : Bool = false) -> @ui.Tester raise {
   let t = @ui.Tester::new(fn(_c) {  }, w=400.0, h=240.0, platform=0)
   t.check_looks(false)
   set_dark(Some(dark))
+  @ui.set_glass_solid(if solid { Some(true) } else { None })
   @ui.set_tree_theme(ui_theme_now)
   set_shortcuts(fn(a) { if a == "find" { keys } else { "" } })
   @ui.set_view_app(fn(root) {
@@ -89,12 +90,21 @@ fn caps_tester(dark : Bool, keys : String) -> @ui.Tester raise {
 }
 
 ///|
-/// The tip's ground drawn (a fill of tip_ground, wider than tall) and its caps', as (x, y, w, h).
+/// The tip's glass surface (single-layer liquid glass, wider than tall; or solid panel_ground fallback under
+/// MBUI_GLASS=solid) and its caps', as (x, y, w, h).
 fn caps_drawn(t : @ui.Tester) -> ((Double, Double, Double, Double)?, Array[(Double, Double, Double, Double)]) {
-  let tip = t.drawn_rects().filter(fn(r) { r.4 == tip_ground() && r.2 > r.3 })
-  let cap = mix(tip_words(), tip_cap_ground, tip_ground())
+  let glass = t.drawn_glass().filter(fn(g) { g.4 == 6 && g.2 > g.3 })
+  let tip = match glass.get(0) {
+    Some(g) => Some((g.0, g.1, g.2, g.3))
+    None =>
+      t.drawn_rects()
+      .filter(fn(r) { r.4 == panel_ground() && r.2 > r.3 })
+      .get(0)
+      .map(fn(r) { (r.0, r.1, r.2, r.3) })
+  }
+  let cap = mix(library_theme().p.text, tip_cap_ground, panel_ground())
   let caps = t.drawn_rects().filter(fn(r) { r.4 == cap }).map(fn(r) { (r.0, r.1, r.2, r.3) })
-  (tip.get(0).map(fn(r) { (r.0, r.1, r.2, r.3) }), caps)
+  (tip, caps)
 }
 
 ///|
@@ -156,4 +166,27 @@ test "the pointer moved to the next button: its tip comes at once from where the
   assert_true(tip is Some(_), msg="no tip drawn")
   assert_eq(caps.length(), 0)
   set_dark(Some(false))
+}
+
+///|
+test "tip_node: single-layer liquid glass when shown, zero hidden glass when dismissed, solid degradation, and contrast pass" {
+  for dark in [false, true] {
+    for solid in [false, true] {
+      let t = caps_tester(dark, "⌘K", solid~)
+      let shown_glass = t.drawn_glass()
+      let expected_glass = if solid { 0 } else { 1 }
+      let liquid_count = shown_glass.filter(fn(g) { g.4 == 6 }).length()
+      let contrast = t.contrast_faults()
+      assert_eq(
+        (dark, solid, shown_glass.length(), liquid_count, contrast),
+        (dark, solid, expected_glass, expected_glass, []),
+      )
+      // Move pointer away and settle: zero hidden glass instances left behind
+      t.move_to(350.0, 220.0)
+      t.run_for(@motion.pop_out_ms * 2.0)
+      assert_eq(t.drawn_glass().length(), 0, msg="dark=\{dark} solid=\{solid} hidden tip emitted glass")
+    }
+  }
+  @ui.set_glass_solid(None)
+  set_dark(None)
 }

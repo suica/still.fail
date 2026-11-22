@@ -3,6 +3,68 @@
 // `ovl_` to stay collision-free with parallel tracks.
 
 ///|
+/// Three-anchor continuous optical interpolation for iOS 27.0 in-place liquid-droplet popover morphing:
+/// - `stage == 0.0`: bar-pill anchor (`a=0x67`, `blur=2.5`, `bezel=14`, `refr=20`, `rim=0.60`);
+/// - `stage == 0.5`: bright crystal mid-flight droplet (`a=0x4E`, `blur=1.6`, `bezel=18`, `refr=15`, `rim=0.78`);
+/// - `stage == 1.0`: resting frosted menu anchor (`a=0xBF`, `blur=8.0`, `bezel=16`, `refr=22`, `rim=0.60`).
+pub fn liquid_menu_morph_glass(
+  stage : Double,
+  solid? : Int64 = clear,
+  dark? : Bool,
+  merge? : Double = 0.0,
+  layer? : Int = 0,
+  break_gap? : Double = 0.0,
+) -> @paint.Glass {
+  let s = clamp(stage, 0.0, 1.0)
+  let d = match dark {
+    Some(v) => v
+    None => is_dark()
+  }
+  let base_rgb = if d { 0x20202000L } else { 0xFDFCFD00L }
+  let (a_f, blur, bezel, refraction, rim) = if s <= 0.5 {
+    let u = s * 2.0
+    (
+      103.0 + (78.0 - 103.0) * u,
+      2.5 + (1.6 - 2.5) * u,
+      14.0 + (18.0 - 14.0) * u,
+      20.0 + (15.0 - 20.0) * u,
+      0.60 + (0.78 - 0.60) * u,
+    )
+  } else {
+    let u = (s - 0.5) * 2.0
+    (
+      78.0 + (191.0 - 78.0) * u,
+      1.6 + (8.0 - 1.6) * u,
+      18.0 + (16.0 - 18.0) * u,
+      15.0 + (22.0 - 15.0) * u,
+      0.78 + (0.60 - 0.78) * u,
+    )
+  }
+  let a = a_f.round().to_int64() & 0xFFL
+  let resolved_solid = if solid != clear {
+    solid
+  } else if d {
+    0x1C1C1EFFL
+  } else {
+    0xF7F7FAFFL
+  }
+  @paint.Glass::liquid(
+    blur~,
+    tint=base_rgb | a,
+    solid=resolved_solid,
+    saturation=1.0,
+    rim~,
+    bezel~,
+    refraction~,
+    chroma=0.0,
+    merge~,
+    layer~,
+    break_gap~,
+    adaptive=false,
+  )
+}
+
+///|
 /// Liquid glass material for floating panels (Menu, Popover, List, Disclosure).
 /// Symmetric 75% high-readability liquid glass (`0xFDFCFDBFL` light / `0x202020BFL` dark).
 pub fn liquid_panel_glass(solid? : Int64 = clear) -> @paint.Glass {

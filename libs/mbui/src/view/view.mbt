@@ -114,6 +114,9 @@ pub(all) struct Look {
   /// View::corners
   mut corners : (Double, Double, Double, Double)?
   mut glass : @paint.Glass?
+  /// foreground optical lens applied to this node's children (offscreen Gaussian defocus + spherical bevel refraction +
+  /// SDF clipping; none when resting): View::content_lens
+  mut content_lens : @paint.ContentLens
   mut alpha : Double
   mut dx : Double
   mut dy : Double
@@ -2035,6 +2038,7 @@ fn Tree::made(self : Tree, parent : Int, words_as_said? : Bool = false, loc? : S
       n.look.drawn_off = (0.0, 0.0)
       n.look.drawn_exact = false
       n.look.ground_drawn = ground_as_laid
+      n.look.content_lens = @paint.ContentLens::none()
       n.look.cut_soft = false
       if n.look.rects.length() > 0 {
         n.look.rects = []
@@ -2196,7 +2200,7 @@ fn Tree::made(self : Tree, parent : Int, words_as_said? : Bool = false, loc? : S
         gen: 0,
         live: true,
         flex: @flex.Node::new(),
-        look: { ground: 0L, ground_over: 0L, ink: 0L, words: "", words_drawn: None, words_look: words_plain, runs: [], runs_look: runs_plain, runs_pressed: -1, runs_picked: (0, 0), runs_marks: [], shadow: (0.0, 0.0, 0L), halo: (0.0, 0L), rects: [], shapes: [], tint: 0L, lines: [], edge: (0.0, 0L), ring: (0.0, 0.0, 0L), focus_ring: None, image: None, image_for: (0.0, 0.0), image_cover: false, image_contain: false, image_cover_at: None, image_fade: false, stretch: 0.0, image_in: None, radius: 0.0, corners: None, glass: None, alpha: 1.0, dx: 0.0, dy: 0.0, sx: 0.0, sy: 0.0, scale: 1.0, pivot: At(0.5, 0.5), scale_shift: 0.0, scale_peak: 0.0, turn: 0.0, turn_drawn: false, fades: (0.0, 0.0, 0.0, 0.0), drawn_off: (0.0, 0.0), drawn_exact: false, ground_drawn: ground_as_laid, cut_soft: false, drawn_as: "", clips: false, clips_past: 0.0, words_center: false, words_breaks: false, words_optical: false, words_tabular: None, glyphs_said: 0, ellipsis_past: false, picture: None },
+        look: { ground: 0L, ground_over: 0L, ink: 0L, words: "", words_drawn: None, words_look: words_plain, runs: [], runs_look: runs_plain, runs_pressed: -1, runs_picked: (0, 0), runs_marks: [], shadow: (0.0, 0.0, 0L), halo: (0.0, 0L), rects: [], shapes: [], tint: 0L, lines: [], edge: (0.0, 0L), ring: (0.0, 0.0, 0L), focus_ring: None, image: None, image_for: (0.0, 0.0), image_cover: false, image_contain: false, image_cover_at: None, image_fade: false, stretch: 0.0, image_in: None, radius: 0.0, corners: None, glass: None, content_lens: @paint.ContentLens::none(), alpha: 1.0, dx: 0.0, dy: 0.0, sx: 0.0, sy: 0.0, scale: 1.0, pivot: At(0.5, 0.5), scale_shift: 0.0, scale_peak: 0.0, turn: 0.0, turn_drawn: false, fades: (0.0, 0.0, 0.0, 0.0), drawn_off: (0.0, 0.0), drawn_exact: false, ground_drawn: ground_as_laid, cut_soft: false, drawn_as: "", clips: false, clips_past: 0.0, words_center: false, words_breaks: false, words_optical: false, words_tabular: None, glyphs_said: 0, ellipsis_past: false, picture: None },
         parent,
         allow_ellipsis: false,
         words_as_said,
@@ -4103,6 +4107,7 @@ priv enum Prop {
   Rects
   WordsOptical
   WordsTabular
+  ContentLens
 }
 
 ///|
@@ -4221,6 +4226,7 @@ impl Show for Prop with output(self, logger) {
       Rects => "Rects"
       WordsOptical => "WordsOptical"
       WordsTabular => "WordsTabular"
+      ContentLens => "ContentLens"
     },
   )
 }
@@ -4363,6 +4369,7 @@ fn Prop::ord(self : Prop) -> Int {
     Rects => 105
     WordsOptical => 106
     WordsTabular => 107
+    ContentLens => 108
   }
 }
 
@@ -6450,6 +6457,26 @@ pub fn GroundShape::reshaped(self : GroundShape) -> Bool {
 pub fn View::ground_drawn(self : View, d : Live[GroundShape], loc~ : SourceLoc) -> View {
   self.bind(loc~, GroundDrawn, d, Place, fn(d) { self.tree.nodes[self.at].look.ground_drawn = d })
   self
+}
+
+///|
+/// Foreground optical lens applied to what this node holds (ContentLens: offscreen Gaussian defocus, spherical bevel
+/// refraction, alpha, clipped to the node's drawn rounded-rect SDF). Zero overhead when resting (`blur <= 0.05` and
+/// `refraction <= 0.05`). Place's: nothing of it made again.
+#callsite(autofill(loc))
+pub fn View::content_lens(self : View, lens : Live[@paint.ContentLens], loc~ : SourceLoc) -> View {
+  self.bind(loc~, ContentLens, lens, Place, fn(l) { self.tree.nodes[self.at].look.content_lens = l })
+  self
+}
+
+///|
+/// Foreground optical lens of node `id` (View::content_lens; none for one let go).
+pub fn Tree::content_lens_of(self : Tree, id : NodeId) -> @paint.ContentLens {
+  if self.alive_id(id) {
+    self.nodes[id.at].look.content_lens
+  } else {
+    @paint.ContentLens::none()
+  }
 }
 
 ///|

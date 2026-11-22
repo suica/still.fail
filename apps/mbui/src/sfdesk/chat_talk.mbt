@@ -144,7 +144,7 @@ pub fn chat_drop_node(
         1
       },
       fn(o) {
-        o.grow(Is(1.0)).glass(By(fn() { Some(@sf.glass_floating()) })) |> ignore
+        @sf.glass_capsule_node(o.grow(Is(1.0)), sharing=false) |> ignore
         @sf.style_node(o, fn() { drop_hint_box })
         @sf.icon_node(
           o,

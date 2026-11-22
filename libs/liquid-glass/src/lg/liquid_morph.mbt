@@ -152,19 +152,7 @@ fn ovl_morph_shell_glass(mat_t : Double, gap : Double, merge~ : Double) -> @pain
   if t >= 0.999 {
     return ovl_panel_glass()
   }
-  let d = is_dark()
-  @paint.Glass::liquid(
-    blur=lerp(2.1, 8.0, t),
-    tint=if d { 0x20202067L } else { 0xFDFCFD67L },
-    solid=if d { 0x1C1C1EFFL } else { 0xF7F7FAFFL },
-    saturation=1.0,
-    rim=0.6,
-    bezel=lerp(14.0, 20.0, t),
-    refraction=lerp(18.0, 36.0, t),
-    chroma=0.0,
-    merge=0.0,
-    adaptive=false,
-  )
+  liquid_menu_morph_glass(0.5 + 0.5 * t)
 }
 
 ///|
@@ -649,7 +637,7 @@ fn ovl_attach_liquid_morph(
         |> ignore
       None => ()
     }
-    // 6. Foreground content box: smooth 160ms reveal after 170ms delay (70ms fade-out first on close)
+    // 6. Foreground content box: smooth reveal with optical focus-in/defocus via `content_lens` (0 resting overhead)
     inner.box(fn(content_box) {
       content_ref.val = Some(content_box)
       content_box
@@ -657,7 +645,36 @@ fn ovl_attach_liquid_morph(
         By(fn() { lerp(0.95, 1.0, reveal_way.shown(content_box)) }),
         about=ovl_morph_pivot(side, along),
       )
-      .alpha(By(fn() { reveal_way.shown(content_box) }))
+      .alpha(
+        By(fn() {
+          let r = reveal_way.shown(content_box)
+          let cblur = 6.5 * (1.0 - r)
+          let lens_on = !content_box.glass_solid() && r > 0.01 && cblur > 0.05
+          if r <= 0.01 {
+            0.0
+          } else if lens_on {
+            1.0
+          } else {
+            r
+          }
+        }),
+      )
+      .content_lens(
+        By(fn() {
+          let r = reveal_way.shown(content_box)
+          let cblur = 6.5 * (1.0 - r)
+          if !content_box.glass_solid() && r > 0.01 && cblur > 0.05 {
+            {
+              blur: cblur,
+              refraction: 6.0 * clamp(cblur / 8.0, 0.0, 1.0),
+              bezel: 24.0,
+              alpha: r,
+            }
+          } else {
+            @paint.ContentLens::none()
+          }
+        }),
+      )
       .offset(
         By(fn() {
           let d = (1.0 - reveal_way.shown(content_box)) * 4.0

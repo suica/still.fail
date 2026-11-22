@@ -210,7 +210,11 @@ fn open_target_now(src : Source, t : LinkTarget, outside : Bool, at : Double?, n
       }
       match at { Some(seq) => go_to(r, seq); None => () }
       match app.nav.top() {
-        Chat(top) if top.station == address && top.session == t.chat => ()
+        Chat(top) if top.station == address && top.session == t.chat =>
+          if outside {
+            (shell.val.close_overlays)()
+            match at { Some(seq) => go_to(top, seq, keep_place=false); None => () }
+          }
         _ =>
           if ws != current {
             open_item(src, ws, address, t.chat, None, None)
@@ -248,7 +252,20 @@ fn open_target_now(src : Source, t : LinkTarget, outside : Bool, at : Double?, n
         Chat(r) => r.station == address && (r.session == t.session || works_in(src, r, t.session))
         _ => false
       }
-      if outside {
+      if outside && ws == current && here {
+        (shell.val.close_overlays)()
+        match (top, at) {
+          (Chat(top_r), Some(seq)) => {
+            @hostapi.log("notice opens \{address}|\{t.session} at \{seq.to_int()}")
+            go_to(top_r, seq, keep_place=false)
+          }
+          _ => ()
+        }
+        match service {
+          Some(job) => open_page(Service(address, job))
+          None => ()
+        }
+      } else if outside {
         open_item(src, ws, address, t.session, service, at)
       } else if here {
         match service {

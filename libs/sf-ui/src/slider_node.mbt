@@ -61,14 +61,30 @@ pub fn value_slider_node(
     disabled~,
     value_text=fn(x) { format(x.round().to_int()) },
     fn(v, sl) {
-      // (held: the drop, its bubble; springing to it as the hand takes it and back as it lets go)
+      let dd = @lg.DampedDrag::new(@signals.untracked(value), lo=min, hi=max, held_scale=1.5)
+      dd.attach(v)
+      let no_lens = fn() { v.glass_solid() || @ui.reduced_motion() }
+      let lens = fn(n : @view.View) -> Double { if no_lens() { 0.0 } else { dclamp(dd.pressed(n), 0.0, 1.0) } }
+      // (held: the drop, its bubble, and its liquid glass lens; springing to it as the hand takes it and back as it lets go)
       let held = @motion.NodeWay::new(0.0)
+      let pressed_at : Ref[Double] = Ref(-1.0)
       v.reacts(fn() { sl.pressed() && !disabled() }, at_start=false, fn(on) {
         // (taken on a spring, a little past it; let go, eased back out with no overshoot: the bubble gone once)
         if on {
+          pressed_at.val = v.cause_at()
           held.go(v, 1.0, @motion.tactile_bounce)
+          if !no_lens() {
+            dd.press()
+          }
         } else {
+          pressed_at.val = -1.0
           held.go_ms(v, 0.0, vslider_let_go_ms)
+          dd.release()
+        }
+      })
+      v.reacts(at_start=false, value, fn(x) {
+        if !no_lens() && sl.pressed() && v.cause_at() > pressed_at.val {
+          dd.update_value(x)
         }
       })
       let hold = fn() { dmax(0.0, held.shown(v)) }
@@ -120,27 +136,71 @@ pub fn value_slider_node(
           |> ignore
         })
         |> ignore
-        // its knob: laid out where its value has it along (a lane over all of it, room before it as far as that), so
-        // what stands beside it (its bubble, in the tips' layer) goes where it is; laid out anew only as its value
-        // changes, drawn off that on its way there as the keys step it (`lag`)
-        let knob : Ref[@view.View?] = Ref(None)
-        row.box(fn(lane) {
-          lane.over(Is(true)).row(Is(true)).lines_up(Is(Some(Middle))) |> ignore
-          lane.box(fn(before) { before.width(By(fn() { Some(dmax(0.0, cx() - r)) })) |> ignore }) |> ignore
-          knob.val = Some(
-            lane.box(fn(k) {
-              k
-              .width(Is(Some(vslider_knob_d)))
-              .height(Is(Some(vslider_knob_d)))
-              .radius(Is(r))
-              .ground(Is(0xFFFFFFFFL))
-              .shadow(Is((2.0, 1.0, 0x00000033L)))
-              .moved_by(fn(_w, _h, at) { (off_at(at), 0.0) }, fn(_w, _h) { lag.end() })
-              |> ignore
-            }),
-          )
+        // its knob: positioned in the paint layer via moved_by (zero relayout while dragging), fading out under the
+        // lazy-mounted clear liquid glass refraction loupe while held
+        let knob = row.box(fn(k) {
+          k
+          .over(Is(true))
+          .points(Is(false))
+          .offset(Is((0.0, cy - r)))
+          .width(Is(Some(vslider_knob_d)))
+          .height(Is(Some(vslider_knob_d)))
+          .radius(Is(r))
+          .ground(Is(0xFFFFFFFFL))
+          .shadow(Is((2.0, 1.0, 0x00000033L)))
+          .alpha(By(fn() { 1.0 - lens(k) }))
+          .moved_by(fn(_w, _h, at) { (cx() - r + off_at(at), 0.0) }, fn(_w, _h) { lag.end() })
+          |> ignore
         })
-        |> ignore
+        // Lazy-mounted clear liquid glass magnifying lens over the knob while held (0 hidden glass & 0 extra nodes at rest; laid == 0)
+        let lens_mounted : @signals.Signal[Bool] = @signals.signal(false)
+        row.reacts(fn() { !no_lens() && (dd.pressing() || dd.pressed(row) > 0.001) }, fn(active) {
+          if active && !lens_mounted.untracked() {
+            lens_mounted.set(true)
+          }
+        })
+        row.show(fn() { lens_mounted.get() }, at_once=true, fn(gl) {
+          gl
+          .over(Is(true))
+          .points(Is(false))
+          .offset(Is((0.0, 0.0)))
+          .width(Is(Some(vslider_knob_d)))
+          .height(Is(Some(vslider_knob_d)))
+          .radius(Is(r))
+          .glass(By(fn() {
+            let p = lens(gl)
+            if p > 0.001 {
+              Some(@lg.liquid_tab_lens_glass(p, solid=theme().p.raised))
+            } else {
+              None
+            }
+          }))
+          .shadow(By(fn() {
+            let p = lens(gl)
+            if p > 0.001 {
+              (4.0 * p, 2.0 * p, 0x00000022L)
+            } else {
+              (0.0, 0.0, 0L)
+            }
+          }))
+          .shadow_outside(Is(true))
+          .alpha(By(fn() { lens(gl) }))
+          .ground_drawn(By(fn() {
+            let (sx, sy) = dd.jelly(gl, 10.0)
+            let lw = vslider_knob_d * sx
+            let lh = vslider_knob_d * sy
+            let x = r + (sl.part() + lag.shown(gl)) * span()
+            let rr = lh / 2.0
+            {
+              dx: x - lw / 2.0,
+              dy: cy - lh / 2.0,
+              dw: lw - vslider_knob_d,
+              dh: lh - vslider_knob_d,
+              corners: Some((rr, rr, rr, rr)),
+            }
+          }))
+          |> ignore
+        })
         // over the knob while held: its value (rolling as the keys step it, each step under the hand there at once), in
         // a bubble of its own
         let bubble_in = fn(o : @view.View) {
@@ -156,19 +216,18 @@ pub fn value_slider_node(
           })
           |> ignore
         }
-        match (bubble, tips, knob.val) {
-          // (in the tips' layer, over all of the window: beside the knob, over its top, never cut by what holds the
-          // slider (a card's edge drawn over what it holds, a column that clips); let go with the knob. Made as it is first
-          // held where there is no layer yet as it is made)
-          (true, Some(layer), Some(k)) => {
+        match (bubble, tips) {
+          // (in the tips' layer, over all of the window: beside the slider track and shifted over the knob in paint
+          // layer so dragging triggers zero relayout, never cut by what holds the slider; let go with the knob)
+          (true, Some(layer)) => {
             let made = Ref(false)
             let make = fn() {
               guard !made.val && (layer.layer)() is Some(top) else { return }
               made.val = true
-              let holder = top.box(fn(h) { h.over(Is(true)) |> ignore }).lives_with(k)
+              let holder = top.box(fn(h) { h.over(Is(true)) |> ignore }).lives_with(knob)
               holder.show(fn() { hold() > 0.0 }, at_once=true, fn(o) {
                 o
-                .beside(k.id(), side=Top, along=Middle, offset=vslider_bubble_gap)
+                .beside(knob.id(), side=Top, along=Middle, offset=vslider_bubble_gap)
                 .scale(By(fn() { dmin(1.0, slider_bubble_scale_from + (1.0 - slider_bubble_scale_from) * hold()) }), about=FromBeside)
                 |> ignore
                 bubble_in(o)
@@ -178,7 +237,7 @@ pub fn value_slider_node(
             v.reacts(fn() { sl.pressed() }, at_start=false, fn(down) { if down { make() } })
           }
           // (no layer given: over the knob in the slider itself)
-          (true, _, _) =>
+          (true, None) =>
             row.show(fn() { hold() > 0.0 }, at_once=true, fn(o) {
               o
               .over(Is(true), edges=(None, Some(-vslider_bubble_gap), None, None))

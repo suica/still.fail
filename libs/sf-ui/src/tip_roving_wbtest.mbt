@@ -55,9 +55,14 @@ fn roving_shown(t : @ui.Tester) -> Array[String] {
 }
 
 ///|
-/// The grounds drawn in colour `ink` (a tip's): where each is.
+/// The liquid-glass tooltip grounds drawn (or solid fallback rects of colour `ink`): where each is.
 fn roving_grounds(t : @ui.Tester, ink : Int64) -> Array[(Double, Double, Double, Double)] {
-  t.drawn_rects().filter(fn(r) { r.4 == ink }).map(fn(r) { (r.0, r.1, r.2, r.3) })
+  let glass = t.drawn_glass().filter(fn(g) { g.4 == 6 }).map(fn(g) { (g.0, g.1, g.2, g.3) })
+  if !glass.is_empty() {
+    glass
+  } else {
+    t.drawn_rects().filter(fn(r) { r.4 == ink }).map(fn(r) { (r.0, r.1, r.2, r.3) })
+  }
 }
 
 ///|
@@ -68,16 +73,21 @@ fn roving_tool_at(t : @ui.Tester, k : Int) -> (Double, Double) raise {
 }
 
 ///|
-/// Tool `k`'s tip rested on from a row none of whose tips showed: its rect and its ground's colour.
+/// Tool `k`'s tip rested on from a row none of whose tips showed: its rect and its ground's colour (or 1L for liquid glass).
 fn roving_cold(k : Int) -> ((Double, Double, Double, Double), Int64) raise {
   let t = roving_tips_tester()
   let (x, y) = roving_tool_at(t, k)
   t.move_to(x, y)
   t.run_for(tip_delay_ms + tip_settled_ms)
   let tip = t.get(Tooltip, label=roving_labels[k]).rect
-  let ink = match t.drawn_rects().filter(fn(r) { (r.0, r.1, r.2, r.3) == tip }).get(0) {
-    Some(r) => r.4
-    None => 0L
+  let has_glass = t.drawn_glass().iter().any(fn(g) { g.4 == 6 && (g.0, g.1, g.2, g.3) == tip })
+  let ink = if has_glass {
+    1L
+  } else {
+    match t.drawn_rects().filter(fn(r) { (r.0, r.1, r.2, r.3) == tip }).get(0) {
+      Some(r) => r.4
+      None => 0L
+    }
   }
   (tip, ink)
 }

@@ -4411,6 +4411,15 @@ double mb_host_thread_cpu_ms(void) {
   return -1.0;
 }
 
+// The display's refresh rate in Hz (@hostapi.display_hz; 0: unknown or settled run).
+double mb_host_display_hz(void) {
+  if (settled_run()) return 0.0;
+  NSScreen *screen = the_view.window.screen ?: NSScreen.mainScreen;
+  if (!screen) return 0.0;
+  double hz = (double)screen.maximumFramesPerSecond;
+  return hz > 0.0 ? hz : 0.0;
+}
+
 double mb_host_mem_bytes(void) {
   task_vm_info_data_t info;
   mach_msg_type_number_t n = TASK_VM_INFO_COUNT;

@@ -592,6 +592,14 @@ priv struct LeftPageChat {
 let left_page_sources : Map[Int, LeftPageChat?] = Map([])
 
 ///|
+// The navigation entry serial that recorded each left_pages index, and indices cancelled because that serial woke back
+// onto the stack before pages_left ran.
+let left_page_serials : Map[Int, Int] = Map([])
+
+///|
+let left_pages_cancelled : Map[Int, Bool] = Map([])
+
+///|
 let page_source_seen : Ref[Int] = Ref(0)
 
 ///|
@@ -889,6 +897,12 @@ pub fn page_entry_read(serial : Int, source : Source, page : Page) -> Unit {
 /// What entry `serial` takes up as its page is made (page_entry_read's first half): taken back from the stack's kept
 /// left, and what the page before handed over let go of once this frame's build has read what it reads.
 fn page_entry_wake(serial : Int) -> Unit {
+  // (woken back onto the stack before pages_left ran: cancel any pending leave recorded for this serial)
+  for index, s in left_page_serials {
+    if s == serial {
+      left_pages_cancelled[index] = true
+    }
+  }
   // (taken back from the stack's kept left: its sources read again)
   match entries_kept.get(serial) {
     Some(done) => {
@@ -992,6 +1006,22 @@ pub fn left_page_source(fallback : Source, index : Int) -> (Source?, ChatView?) 
     Some(None) => (None, None)
     None => (Some(fallback), None)
   }
+}
+
+///|
+/// Whether `left_pages[index]` was cancelled because its navigation entry woke back onto the stack before
+/// `pages_left` ran.
+pub fn left_page_cancelled(index : Int) -> Bool {
+  left_pages_cancelled.get(index).unwrap_or(false)
+}
+
+///|
+/// Clears `left_pages` and its per-index metadata once `pages_left` finishes.
+pub fn left_pages_clear() -> Unit {
+  left_pages.clear()
+  left_page_sources.clear()
+  left_page_serials.clear()
+  left_pages_cancelled.clear()
 }
 
 ///|
@@ -1355,8 +1385,11 @@ fn page_entry_tells_left(serial : Int, p : Page, parked : Bool) -> Unit {
     }
     None => ()
   }
+  let index = left_pages.length()
+  left_page_serials[index] = serial
+  left_pages_cancelled.remove(index)
   match p {
-    Chat(_) => left_page_sources[left_pages.length()] = chat
+    Chat(_) => left_page_sources[index] = chat
     _ => ()
   }
   left_pages.push(p)
@@ -1557,7 +1590,7 @@ pub fn reset() -> Unit {
   app.held_long = false
   // (none said; which saying was last kept: the next a new one, as ever)
   app.toast.set({ ..toast_none, n: @signals.untracked(fn() { app.toast.get().n }) })
-  left_pages.clear()
+  left_pages_clear()
   active_chat_readers.clear()
   entry_parks.clear()
   entries_kept.clear()

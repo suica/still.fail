@@ -554,6 +554,24 @@ fn journal_flush_small() -> Unit {
 }
 
 ///|
+/// Drains accumulated `@hostapi.work_part` notes for the piece just finished, keeping the longest `journal_notes_kept`
+/// parts that took at least `journal_floor_ms`.
+fn journal_take_notes() -> Array[(String, Double)] {
+  if journal_notes.is_empty() {
+    []
+  } else {
+    let all = journal_notes.to_array().filter(fn(n) { n.1 >= journal_floor_ms })
+    journal_notes.clear()
+    all.sort_by(fn(a, b) { b.1.compare(a.1) })
+    if all.length() > journal_notes_kept {
+      all[:journal_notes_kept].to_owned()
+    } else {
+      all
+    }
+  }
+}
+
+///|
 /// A piece of work done from `start` to `end`: kept, or folded where it is short and of a kind that comes often (an
 /// event, what follows a frame). When `wall >= 4.0ms` and `cpu_ms >= 0.0`, attaches `("cpu", round_tenth(cpu_ms))`
 /// to `Worked.notes` (bypassing `journal_floor_ms` so OS preemption like wall=53.7ms, cpu=0.3ms is preserved).
@@ -565,6 +583,7 @@ fn journal_work(
   late_ms? : Double = -1.0,
   gpu_ms? : Double = -1.0,
   gpu_dropped? : Int = 0,
+  taken_notes? : Array[(String, Double)]? = None,
 ) -> Unit {
   if journal_counts[5] < 0.0 {
     journal_counts[5] = start
@@ -573,17 +592,9 @@ fn journal_work(
   journal_counts[4] += wall_ms
   // (what it went on, the longest first)
   // (a part 1 ms in all at least: its pieces summed by where it was made, each as short as work_part tells)
-  let notes : Array[(String, Double)] = if journal_notes.is_empty() {
-    []
-  } else {
-    let all = journal_notes.to_array().filter(fn(n) { n.1 >= journal_floor_ms })
-    journal_notes.clear()
-    all.sort_by(fn(a, b) { b.1.compare(a.1) })
-    if all.length() > journal_notes_kept {
-      all[:journal_notes_kept].to_owned()
-    } else {
-      all
-    }
+  let notes : Array[(String, Double)] = match taken_notes {
+    Some(ns) => ns
+    None => journal_take_notes()
   }
   if wall_ms >= 4.0 && cpu_ms >= 0.0 {
     notes.push(("cpu", journal_ms(cpu_ms)))
@@ -665,6 +676,7 @@ fn journal_frame(
   cw? : Double = -1.0,
   c3? : Double = -1.0,
   c4? : Double = -1.0,
+  frame_notes? : Array[(String, Double)]? = None,
 ) -> Unit {
   let why = if t3 - tw < probe_slow_ms {
     ""
@@ -731,6 +743,7 @@ fn journal_frame(
     late_ms=late,
     gpu_ms=gms,
     gpu_dropped=gdrop,
+    taken_notes=frame_notes,
   )
   journal_work(Present, t3, t4, cpu_ms=journal_cpu_delta(c3, c4))
   journal_counts[0] += 1.0
@@ -1170,6 +1183,10 @@ pub fn Hang::json(self : Hang) -> Json {
     o["window_w"] = Json::number(self.window_w.round())
     o["window_h"] = Json::number(self.window_h.round())
   }
+  let hz = @hostapi.display_hz()
+  if hz > 0.0 {
+    o["display_hz"] = Json::number(hz.round())
+  }
   Json::object(o)
 }
 
@@ -1252,6 +1269,10 @@ pub fn HangSummary::json(self : HangSummary) -> Json {
       _ => ()
     }
     o["gpu"] = Json::object(gpu_obj)
+  }
+  let hz = @hostapi.display_hz()
+  if hz > 0.0 {
+    o["display_hz"] = Json::number(hz.round())
   }
   Json::object(o)
 }

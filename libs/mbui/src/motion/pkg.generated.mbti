@@ -275,6 +275,10 @@ pub let pop_out : Trans
 
 pub let pop_out_ms : Double
 
+pub let popover_bloom_spring : Spec
+
+pub let popover_neck_spring : Spec
+
 pub fn pregenerate_keyframes(Generator) -> (Array[Double], Double)
 
 pub fn presence(@ui.Ctx, String, Bool, enter? : Trans, exit? : Trans, initial? : Bool, start_at? : Double) -> @ui.Look?

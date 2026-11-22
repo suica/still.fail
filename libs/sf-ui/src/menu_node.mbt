@@ -375,6 +375,7 @@ fn menu_node_by(
         let items = content()
         items.length() > 0 && (items[items.length() - 1] is Some(i) && !i.heading)
       }
+      anchored_popover_bridge(layer, at, look, side~, along~, offset~)
       layer.box(fn(p) {
         panel.val = Some(p)
         // (what it is to the keys and a screen reader: @headless.menu, in its own node; the focus its own as it opens by
@@ -408,7 +409,8 @@ fn menu_node_by(
               // (all it holds as far in as its look says, past the panel's own ground, edge and shadow: its rows, their
               // grounds, checks, marks and words, its headings and lines, the same, Look's `words` as a surface's are)
               let side = panel_pad - reach
-              body.margin(Is((-side, 0.0, -side, 0.0))).alpha(By(words_in)) |> ignore
+              body.margin(Is((-side, 0.0, -side, 0.0))) |> ignore
+              popover_content_motion(p, body, words_in)
               body.scrolls(@view.Scroll::new(), slop=@ui.touch_slop(), bar=@ui.tree_scroll_bar(), fn(b) {
                 b.padding(Is((side, 0.0, side, 0.0))) |> ignore
                 // (its title over its rows, in a heading's look: none over a heading of its own first, two headings

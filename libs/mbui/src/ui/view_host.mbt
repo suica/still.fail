@@ -246,6 +246,9 @@ priv struct ViewBlock {
   /// where its glass is among its instances (-1 none), whether it shares the last frosted capture, and whether glass was
   /// drawn solid as it was made (made again as that changes: the system asking for less transparency)
   glass_at : Int
+  glass_layer : Int
+  glass_merge : Double
+  glass_break_gap : Double
   shares : Bool
   solid : Bool
   /// the pixels a point it was made for (its picture's curves cut for them: made again as they change, View::picture)
@@ -1528,6 +1531,13 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
   // next is no longer in it, as an old view's box's border over what it holds (scene.mbt's border_over); where it is
   // drawn, how big, how opaque)
   let rings : Array[(@view.NodeId, FixedArray[Double], (Int, (Double, Double), @view.NodeId?, Int))] = []
+  // (liquid glass nodes participating in same-layer proximity fusion: Glass::liquid(layer>0))
+  let glass_slots : Array[GlassSlot] = []
+  let glass_open : Array[Int] = []
+  // (foreground optical lens nodes currently open: (node id, kind==8 header instance index))
+  let lens_open : Array[(@view.NodeId, Int)] = []
+  let mut nav_scope_gen = 0
+  let nav_scope_stack : Array[(@view.NodeId, Int)] = []
   // (what was open and holds not `next` (none: the end) closed, the innermost first: a clip popped, an edge drawn)
   let open = fn(id : @view.NodeId, next : @view.NodeId?) {
     match next {
@@ -1552,6 +1562,20 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
         let (_, held, by) = rings.pop().unwrap()
         self.view_ring_put(held, by)
       }
+    }
+    while lens_open.length() > 0 && !open(lens_open[lens_open.length() - 1].0, next) {
+      let (_, hdr_idx) = lens_open.pop().unwrap()
+      let child_n = self.ninst - hdr_idx - 1
+      if child_n > 0 {
+        self.inst[hdr_idx * inst_size + 12] = child_n.to_double()
+      } else {
+        self.inst[hdr_idx * inst_size + 12] = 0.0
+        self.inst[hdr_idx * inst_size + 11] = 0.0
+      }
+    }
+    while glass_open.length() > 0 && !open(glass_slots[glass_open[glass_open.length() - 1]].id, next) {
+      let idx = glass_open.pop().unwrap()
+      glass_slots[idx].sub_end = self.ninst
     }
   }
   // (what was opened since there were `c0` clips and `r0` edges open closed, the innermost first: a row being drawn ended,
@@ -1824,6 +1848,9 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
       let (_, cut_l, cut_r, runs0) = nav_clipping.pop().unwrap()
       nav_clip_trim(runs0, cut_l, cut_r)
     }
+    while nav_scope_stack.length() > 0 && !tree.holds_in_order(nav_scope_stack[nav_scope_stack.length() - 1].0, c.id) {
+      nav_scope_stack.pop() |> ignore
+    }
     // (the root, the window, is drawn by nothing of its own)
     if c.id.at == 0 {
       return false
@@ -1885,6 +1912,7 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
       stretching.length() == 0 &&
       unveiling.length() == 0 &&
       particling.length() == 0 &&
+      lens_open.length() == 0 &&
       glass_paint.ink_r == 0.0 &&
       nav_veil is None &&
       nav_clip is None &&
@@ -1953,6 +1981,7 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
     let stack = tree.stack_of(c.id)
     if stack >= 0 && tree.root_holds(c.id) {
       ride_spoil()
+      nav_scope_stack.clear()
       close_to(None)
       while particling.length() > 0 {
         let at = particling.pop().unwrap()
@@ -2057,6 +2086,10 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
       }
       None => ()
     }
+    if nav_clip is Some(_) || nav_veil is Some(_) {
+      nav_scope_gen += 1
+      nav_scope_stack.push((c.id, nav_scope_gen))
+    }
     let k0 = self.ninst
     let k = clip_top()
     // (what it draws itself, and where its edge was composed among the frame's instances (-1: none), drawn after what it
@@ -2129,6 +2162,7 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
     } else if (x > clip_stack[k + 2] || y > clip_stack[k + 3] || x + c.w * s < clip_stack[k] || y + c.h * s < clip_stack[k + 1]) &&
       stretching.length() == 0 &&
       particling.length() == 0 &&
+      lens_open.length() == 0 &&
       turn == 0.0 &&
       !ground_drawn.reshaped() &&
       (c.shadow.2 & 0xFFL) == 0L &&
@@ -2144,7 +2178,61 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
       self.ride_spot(c, x, y, s, a, false)
       -1
     } else {
-      self.view_drawn(tree, c, x, y, a, s, ux, uy, turn, ground_drawn)
+      let r_at = self.view_drawn(tree, c, x, y, a, s, ux, uy, turn, ground_drawn)
+      if !glass_paint.solid {
+        match view_blocks.get(c.id) {
+          Some(b) if b.glass_layer > 0 && b.glass_at >= 0 => {
+            ride_spoil()
+            match list_riding.val {
+              Some(l) => l.spoiled = true
+              None => ()
+            }
+            let gi = k0 + b.glass_at
+            if gi < self.ninst && self.inst[gi * inst_size + 5] == 6.0 && self.inst[gi * inst_size + 15] > 0.001 {
+              let si = if gi + 1 < self.ninst && self.inst[(gi + 1) * inst_size + 5] == 2.0 { gi + 1 } else { -1 }
+              let off = gi * inst_size
+              let gx = self.inst[off]
+              let gy = self.inst[off + 1]
+              let gw = self.inst[off + 2]
+              let gh = self.inst[off + 3]
+              let cx0 = clip_stack[k]
+              let cy0 = clip_stack[k + 1]
+              let cx1 = clip_stack[k + 2]
+              let cy1 = clip_stack[k + 3]
+              if gw > 0.0 && gh > 0.0 && gx < cx1 && gx + gw > cx0 && gy < cy1 && gy + gh > cy0 {
+                let nav_scope = if nav_scope_stack.is_empty() {
+                  0
+                } else {
+                  nav_scope_stack[nav_scope_stack.length() - 1].1
+                }
+                let slot_idx = glass_slots.length()
+                glass_slots.push({
+                  layer: b.glass_layer,
+                  nav_scope,
+                  id: c.id,
+                  glass_idx: gi,
+                  shadow_idx: si,
+                  sub_start: k0,
+                  sub_end: self.ninst,
+                  x0: gx,
+                  y0: gy,
+                  x1: gx + gw,
+                  y1: gy + gh,
+                  cx0,
+                  cy0,
+                  cx1,
+                  cy1,
+                  merge_max: b.glass_merge,
+                  break_gap: b.glass_break_gap,
+                })
+                glass_open.push(slot_idx)
+              }
+            }
+          }
+          _ => ()
+        }
+      }
+      r_at
     }
     // (then, after all it draws itself however it ends, as each of its own was done on the way out: written here, not
     // deferred, a deferred block being a closure made for each node drawn)
@@ -2152,10 +2240,68 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
     // its own edge, its edge drawn over what it holds there, taking no room; pushed before it drew where it is on its way)
     // (an outer concentric ring round it, captured under what holds it before its own clip is pushed, drawn after what it holds)
     let outer_ring_at = self.emit_outer_ring(c, x, y, a, s)
+    // (foreground optical lens: offscreen Gaussian defocus + spherical bevel refraction + SDF clip over children;
+    // zero overhead when resting)
+    let lens = tree.content_lens_of(c.id)
+    let lens_active = dr.mode != mode_hits && (lens.blur > 0.05 || lens.refraction > 0.05)
+    if lens_active {
+      ride_spoil()
+      match list_riding.val {
+        Some(l) => l.spoiled = true
+        None => ()
+      }
+      let (gx, gy, gw, gh) = if ground_drawn.reshaped() {
+        (
+          x + ground_drawn.dx * s,
+          y + ground_drawn.dy * s,
+          dmax(0.0, c.w * s + ground_drawn.dw * s),
+          dmax(0.0, c.h * s + ground_drawn.dh * s),
+        )
+      } else {
+        (x, y, c.w * s, c.h * s)
+      }
+      let (r0, r1, r2, r3) = match ground_drawn.corners {
+        Some((tl, tr, br, bl)) => (tl * s, tr * s, br * s, bl * s)
+        None =>
+          match c.corners {
+            Some((tl, tr, br, bl)) => (tl * s, tr * s, br * s, bl * s)
+            None => {
+              let rr = c.radius * s
+              (rr, rr, rr, rr)
+            }
+          }
+      }
+      let hdr_idx = self.ninst
+      self.push_inst(
+        gx,
+        gy,
+        gw,
+        gh,
+        r0,
+        8.0,
+        0.0,
+        lens.blur * s,
+        0xFFFFFFFFL,
+        dclamp(lens.alpha * a, 0.0, 1.0),
+        0.0,
+        lens.bezel * s,
+        lens.refraction * s,
+        1.0,
+      )
+      let hoff = hdr_idx * inst_size
+      self.inst[hoff + 12] = 0.0
+      self.inst[hoff + 20] = 0.0
+      self.inst[hoff + 36] = r0
+      self.inst[hoff + 37] = r1
+      self.inst[hoff + 38] = r2
+      self.inst[hoff + 39] = r3
+      lens_open.push((c.id, hdr_idx))
+    }
     // (and past its foot as far as it says, drawn only: View::clips_past, a block of a page's list closing cut as tall as
     // it is drawn, not as it rests)
     if c.clips && !c.clips_self {
-      let ch = push_node_clip(c, ground_drawn, x, y, dmax(0.0, c.h + tree.clips_past_of(c.id)) * s, s)
+      let clip_ground = if lens_active { @view.ground_as_laid } else { ground_drawn }
+      let ch = push_node_clip(c, clip_ground, x, y, dmax(0.0, c.h + tree.clips_past_of(c.id)) * s, s)
       clipping.push(c.id)
       // (and across only between where it says, as it is painted, View::cut_across: a second cut, straight, let go with its
       // own as what it holds ends)
@@ -2308,6 +2454,9 @@ fn Ctx::view_paint(self : Ctx, root : Int) -> Unit {
   while particling.length() > 0 {
     let at = particling.pop().unwrap()
     self.particle_apply(at, at.k0, self.ninst)
+  }
+  if glass_slots.length() >= 2 {
+    self.merge_liquid_layers(n0, glass_slots)
   }
   raise_close(None)
   if !raised.is_empty() {
@@ -2925,6 +3074,9 @@ fn Ctx::view_made(self : Ctx, tree : @view.Tree, c : @view.Content, edge_after? 
   // drawn solid)
   let solid = glass_paint.solid
   let mut glass_at = -1
+  let mut glass_layer = 0
+  let mut glass_merge = 0.0
+  let mut glass_break_gap = 0.0
   let mut cut = (0, 0)
   let glyphs : Array[UnplacedGlyph] = []
   // (the glyphs it draws from, told as they are drawn: kept in the atlas as long as it is composed, view_glyphs_held)
@@ -2974,7 +3126,15 @@ fn Ctx::view_made(self : Ctx, tree : @view.Tree, c : @view.Content, edge_after? 
     }
     Some(gl) => {
       glass_at = self.ninst - start
-      self.glass_inst(0.0, 0.0, c.w, c.h, c.radius, gl, gl.strength)
+      let emit_gl = if gl.liquid && gl.layer > 0 {
+        glass_layer = gl.layer
+        glass_merge = gl.merge
+        glass_break_gap = if gl.break_gap > 0.0 { gl.break_gap } else { gl.merge * 0.25 }
+        { ..gl, merge: 0.0 }
+      } else {
+        gl
+      }
+      self.glass_inst(0.0, 0.0, c.w, c.h, c.radius, emit_gl, emit_gl.strength)
       if !gl.liquid {
         notched()
       }
@@ -3368,6 +3528,9 @@ fn Ctx::view_made(self : Ctx, tree : @view.Tree, c : @view.Content, edge_after? 
     segs,
     pack: SegPack::new(),
     glass_at,
+    glass_layer,
+    glass_merge,
+    glass_break_gap,
     shares: c.glass.map_or(false, fn(g) { g.shares_capture }),
     solid,
     scale: self.scale,

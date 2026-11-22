@@ -2,11 +2,16 @@
 // read into records by its sync, and its topics read only those). The Rust tests drove the station
 // module with a fake wire and sink; these drive a core over the host's fetch (station-fixture.ts).
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { zstdCompressSync, zstdDecompressSync } from "node:zlib";
 import { Decompress } from "fzstd";
 import { test } from "node:test";
 import { Effect, Queue } from "effect";
 import { dbName } from "../src/data.ts";
+import { NodeSql } from "../src/hosts/node-sql.ts";
 import { Core } from "../src/core.ts";
 import { CoreError, HostError } from "../src/error.ts";
 import { encode, request } from "../src/ops.ts";
@@ -534,6 +539,137 @@ test("a_push_brings_its_chat_onto_the_device_whether_the_stream_told_it_or_not",
   await host.settle();
   assert.deepEqual(answered(5)?.ok, null);
   assert.equal(host.requests.slice(from).filter((r) => r.url.includes("/admin/api/")).length, 0);
+  // Non-chat synthetic sessions (profile login / billed fallback) never hit the station.
+  from = host.requests.length;
+  call(core, ui, 6, "notice.bring", { station: ST, session: "profile:sh-1", seq: null });
+  await host.settle();
+  assert.deepEqual(answered(6)?.ok, null);
+  call(core, ui, 7, "notice.bring", { station: ST, session: "billed:claude", seq: null });
+  await host.settle();
+  assert.deepEqual(answered(7)?.ok, null);
+  assert.equal(host.requests.slice(from).filter((r) => r.url.includes("/admin/api/")).length, 0);
+  core.close();
+});
+
+test("notice_bring_commits_sqlite_before_answering_even_if_core_stops_at_once", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "stillfail-bring-commit-"));
+  const dbPath = join(dir, "account.sqlite");
+  const opened: DatabaseSync[] = [];
+  const answers: J = {
+    ...base(),
+    "GET /sessions/k2?turns=0&jobs=now": { session: session("k2"), threads: [{ ...threadView(8, 1), sessions: [{ thread: 8, session: "k2", connect: "ember", joinedAt: 1 }] }], turns: [], jobs: [] },
+    "GET /threads/8": { ...threadView(8, 1), sessions: [{ thread: 8, session: "k2", connect: "ember", joinedAt: 1 }] },
+    "GET /threads/8/entries?limit=50": { last: 1, entries: [{ ...entry(1, "落盘测试"), thread: 8 }] },
+  };
+  try {
+    const { host, core } = await started(answers, 0, undefined, (s) => {
+      s.host.openDbHook = () => {
+        const db = new DatabaseSync(dbPath);
+        opened.push(db);
+        return new NodeSql(db, true);
+      };
+    });
+    const ui = core.connect();
+    let committedOnReply = false;
+    let threadCommittedOnReply = false;
+    const origEmit = host.emit.bind(host);
+    host.emit = (client, message) => {
+      origEmit(client, message);
+      const m = message as J;
+      if (m.id === 1 && "ok" in m) {
+        const ro = new DatabaseSync(dbPath, { readOnly: true });
+        try {
+          const rows = ro.prepare("SELECT n FROM entry WHERE station = ? AND thread = ?").all(ST, 8) as { n: number }[];
+          committedOnReply = rows.some((r) => r.n === 1);
+          const threads = ro.prepare("SELECT id FROM thread WHERE station = ? AND id = ?").all(ST, 8);
+          threadCommittedOnReply = threads.length > 0;
+        } finally {
+          ro.close();
+        }
+      }
+    };
+    call(core, ui, 1, "notice.bring", { station: ST, session: "k2", seq: 1 });
+    await host.settle();
+    assert.equal(committedOnReply, true, "entries must be COMMITted in SQLite before notice.bring resolves");
+    assert.equal(threadCommittedOnReply, true, "thread summary must be COMMITted in SQLite before notice.bring resolves");
+    core.close();
+  } finally {
+    for (const db of opened) { try { db.close(); } catch {} }
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("notice_bring_retries_offline_non_lock_link_after_wake_and_respects_lock_refusal", async () => {
+  const answers: J = {
+    ...base(),
+    "GET /threads/7/entries?after=3&limit=50": { last: 4, entries: [entry(4, "醒来就拉到")] },
+  };
+  const { host, core, gate, cloud } = await started(answers);
+  const ui = core.connect();
+  // Drop the stream and let the link enter offline (non-lock) state, as happens while phone slept.
+  gate.stream = "fail";
+  cloud.online = false;
+  host.socketSend("/v1/events", JSON.stringify({ type: "station", workspace: "ws", id: "st", online: false }));
+  await host.time.pass(RECONNECT_MAX_MS * 4, 1_000);
+  assert.equal(core.inner.stations.reachable(ST), false, "link is offline before wake");
+  // Station is back when wake + notice.bring arrive back-to-back without waiting for #follow fiber.
+  gate.stream = "open";
+  call(core, ui, 1, "client.wake", { awayMs: 60_000 });
+  call(core, ui, 2, "notice.bring", { station: ST, session: "k1", seq: 4 });
+  await host.settle();
+  const held = [...core.inner.data.logRange("entry", ST, "7", 1, 100).keys()];
+  assert.deepEqual(held, [1, 2, 3, 4], "notice.bring retries offline non-lock link immediately");
+
+  // A lock-refused offline link must NOT be retried or queried by notice.bring.
+  gate.stream = new CoreError("lock_unconfirmed", "device unapproved", 403);
+  await host.time.pass(RECONNECT_MAX_MS * 4, 1_000);
+  assert.equal(core.inner.stations.reachable(ST), false, "link is offline due to lock");
+  const from = host.requests.length;
+  call(core, ui, 3, "notice.bring", { station: ST, session: "k1", seq: 5 });
+  await host.settle();
+  assert.equal(host.requests.slice(from).filter((r) => r.url.includes("/entries")).length, 0, "lock-refused link is not queried");
+  core.close();
+});
+
+test("notice_bring_fetches_missing_thread_summary_so_chat_view_opens_without_waiting", async () => {
+  const answers: J = {
+    ...base(),
+    "GET /sessions/k2?turns=0&jobs=now": { session: session("k2"), threads: [{ ...threadView(8, 1), sessions: [{ thread: 8, session: "k2", connect: "ember", joinedAt: 1 }] }], turns: [], jobs: [] },
+    "GET /threads/8": { ...threadView(8, 1), sessions: [{ thread: 8, session: "k2", connect: "ember", joinedAt: 1 }] },
+    "GET /threads/8/entries?limit=50": { last: 1, entries: [{ ...entry(1, "新对话首条"), thread: 8 }] },
+  };
+  const { host, core } = await started(answers);
+  const ui = core.connect();
+  assert.equal(core.inner.data.thread(ST, 8), undefined, "thread summary not yet local");
+  call(core, ui, 1, "notice.bring", { station: ST, session: "k2", seq: 1 });
+  await host.settle();
+  assert.notEqual(core.inner.data.thread(ST, 8), undefined, "thread summary fetched locally");
+  assert.deepEqual([...core.inner.data.logRange("entry", ST, "8", 1, 10).keys()], [1]);
+  // Subscribing to chat view immediately yields a non-waiting value (views.ts:3986 reads summary from data.thread).
+  const chatTopic = { topic: "chat", station: ST, thread: 8 };
+  subscribe(core, ui, 2, chatTopic);
+  await host.settle();
+  const chatVal = (core.inner.store.value(chatTopic) as J)?.ok;
+  assert.ok(chatVal && chatVal.waiting !== true, "chat view is ready immediately without waiting");
+  assert.equal(chatVal.messages?.length, 1);
+  core.close();
+});
+
+test("notice_bring_fetches_target_page_directly_when_behind_by_more_than_one_page", async () => {
+  const answers: J = {
+    ...base(),
+    "GET /threads/7/entries?from=31&to=80": { last: 80, entries: entries(31, 80) },
+  };
+  const { host, core } = await started(answers);
+  const ui = core.connect();
+  assert.deepEqual([...core.inner.data.logRange("entry", ST, "7", 1, 100).keys()], [1, 2, 3]);
+  call(core, ui, 1, "notice.bring", { station: ST, session: "k1", seq: 80 });
+  await host.settle();
+  const held = [...core.inner.data.logRange("entry", ST, "7", 31, 80).keys()];
+  assert.equal(held.length, 50, "full latest page 31..80 is held locally");
+  assert.equal(held[0], 31);
+  assert.equal(held[held.length - 1], 80);
+  assert.equal(core.inner.data.threadLast(ST, 7), 80);
   core.close();
 });
 

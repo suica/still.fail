@@ -859,7 +859,11 @@ fn reader_found_node(parent : @view.View, r : Reading, paper : () -> ReaderPaper
       // (a capsule now its keys are round: they stand in its ends concentric with them, 5 in)
       style_node(b, fn() { desk_found_box.then(desk_found_round) })
       b
-      .glass(By(fn() { Some(narrow_glass(paper())) }))
+      .glass(By(fn() { Some(narrow_pill_glass(paper())) }))
+      .edge(By(fn() { if b.glass_solid() { @lg.liquid_solid_edge() } else { (0.0, 0L) } }))
+      .shadow(By(fn() { glass_control_shadow() }))
+      .shadow_outside(Is(true))
+      .clips(Is(true))
       .presses(Is(true))
       .on_press(fn() {  })
       .as_ground()
@@ -1320,6 +1324,10 @@ fn reader_narrow_chrome(
   // the top bar (made as they come, let go once they are gone)
   parent.show(fn() { r.chrome.get() }, leave=reader_bars_ms, fn(o) {
     o.over(Is(true)) |> ignore
+    let top_edge_h = fn(_ : @view.View) { room().0 + narrow_bar_off + @ui.Space::px(S12) + 12.0 }
+    @lg.liquid_scroll_edge_node(o, top_edge_h, top_edge_h, side=Top, bg=fn() { paper().ground }, shield=false)
+    .alpha(By(fn() { shown(o) }))
+    |> ignore
     o.box(fn(top) { top.height(By(fn() { Some(room().0 + narrow_bar_off) })) |> ignore }) |> ignore
     o.box(fn(row) {
       style_node(row, fn() { narrow_bar_row })
@@ -1327,7 +1335,11 @@ fn reader_narrow_chrome(
         style_node(bar, fn() { narrow_top_box })
         bar
         .width(By(fn() { Some(dmin(width() - narrow_bar_side, narrow_top_most)) }))
-        .glass(By(fn() { Some(narrow_glass(paper())) }))
+        .glass(By(fn() { Some(narrow_pill_glass(paper())) }))
+        .edge(By(fn() { if bar.glass_solid() { @lg.liquid_solid_edge() } else { (0.0, 0L) } }))
+        .shadow(By(fn() { glass_control_shadow() }))
+        .shadow_outside(Is(true))
+        .clips(Is(true))
         .alpha(By(fn() { shown(bar) }))
         .offset(By(fn() { (0.0, -narrow_bars_step * (desk_whole - shown(bar))) }))
         // (gone or going, it takes no press: what is under it does)
@@ -1411,6 +1423,10 @@ fn reader_narrow_chrome(
   parent.show(fn() { r.chrome.get() }, leave=reader_bars_ms, fn(o) {
     style_node(o, fn() { narrow_foot_place })
     o.over(Is(true)) |> ignore
+    let foot_edge_h = fn(_ : @view.View) { room().1 + narrow_bar_off + 72.0 }
+    @lg.liquid_scroll_edge_node(o, foot_edge_h, foot_edge_h, side=Bottom, bg=fn() { paper().ground }, shield=false)
+    .alpha(By(fn() { shown(o) }))
+    |> ignore
     o.box(fn(row) {
       style_node(row, fn() { narrow_bar_row })
       row.box(fn(card) {
@@ -1418,7 +1434,11 @@ fn reader_narrow_chrome(
         style_node(card, fn() { narrow_foot_box })
         card
         .width(By(fn() { Some(w()) }))
-        .glass(By(fn() { Some(narrow_glass(paper())) }))
+        .glass(By(fn() { Some(narrow_panel_glass(paper())) }))
+        .edge(By(fn() { if card.glass_solid() { @lg.liquid_overlay_solid_edge() } else { (0.0, 0L) } }))
+        .shadow(By(fn() { glass_overlay_shadow() }))
+        .shadow_outside(Is(true))
+        .clips(Is(true))
         .alpha(By(fn() { shown(card) }))
         .offset(By(fn() { (0.0, narrow_bars_step * (desk_whole - shown(card))) }))
         .presses(By(fn() { r.chrome.get() }))
@@ -1661,14 +1681,17 @@ fn reader_sheet_note(r : Reading) -> String {
 }
 
 ///|
-/// A phone's bars' ground: the paper's raised one at 72%, frosted (glassy).
-fn narrow_glass(p : ReaderPaper) -> @ui.Glass {
-  @ui.Glass::frosted(
-    blur=viewer_bar_blur,
-    tint=alpha(p.raised, desk_glass_share),
-    solid=over(p.ground, alpha(p.raised, desk_glass_share)),
-    saturation=viewer_bar_saturation,
-  )
+/// Single-layer liquid glass for a phone reader's floating top bar and search-hit capsules,
+/// preserving the paper's opaque solid fallback under `MBUI_GLASS=solid`.
+fn narrow_pill_glass(p : ReaderPaper) -> @ui.Glass {
+  @lg.liquid_bar_pill_glass(solid=over(p.ground, alpha(p.raised, desk_glass_share)), sharing=true)
+}
+
+///|
+/// Single-layer liquid glass for a phone reader's floating bottom control panel,
+/// preserving the paper's opaque solid fallback under `MBUI_GLASS=solid`.
+fn narrow_panel_glass(p : ReaderPaper) -> @ui.Glass {
+  @lg.liquid_panel_glass(solid=over(p.ground, alpha(p.raised, desk_glass_share)))
 }
 
 ///|

@@ -5,6 +5,39 @@
 // `find.prev` in the `Find` context), Escape lets the find go.
 
 ///|
+/// Single-layer iOS 26/27 liquid glass for floating find bars (`find_bar_node`), degrading cleanly to `panel_ground()`
+/// under `MBUI_GLASS=solid`.
+pub fn find_panel_glass() -> @ui.Glass {
+  @lg.liquid_panel_glass(solid=panel_ground())
+}
+
+///|
+/// Single-layer floating liquid glass for search capsules (`search_field_node`, `search_page_node`), degrading to
+/// the theme's subtle tinted ground under `MBUI_GLASS=solid`.
+pub fn search_capsule_glass(solid? : Int64) -> @ui.Glass {
+  let t = theme()
+  let fallback = match solid {
+    Some(c) => c
+    None => over(t.p.bg, alpha(t.p.text, 0.06))
+  }
+  @lg.liquid_floating_glass(solid=fallback)
+}
+
+///|
+/// Top-edge progressive blur soft scroll-edge backdrop backed by `@lg.liquid_scroll_edge_node`.
+#callsite(autofill(loc))
+pub fn top_scroll_edge_node(
+  parent : @view.View,
+  base_h : (@view.View) -> Double,
+  fade_h : (@view.View) -> Double,
+  bg? : () -> Int64 = fn() { theme().p.bg },
+  shield? : Bool = true,
+  loc~ : SourceLoc,
+) -> @view.View {
+  @lg.liquid_scroll_edge_node(parent, base_h, fade_h, side=Top, bg~, shield~, loc~)
+}
+
+///|
 /// What finds in a page in `parent`: a row (`frame` its look and its room, said by the page) of, where `field` is given,
 /// a line to type what is looked for in (`placeholder_by` while empty, `edited` told its words as the person changes them;
 /// Enter: `step(1)`; ⇧Enter: `step(-1)`; Escape: `close`), what `said()` says of where the reader is among what was
