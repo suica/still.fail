@@ -30,6 +30,7 @@ jobs:
           set -euo pipefail
           mkdir -p "$RUNNER_TEMP/evidence" "$RUNNER_TEMP/inbox"
           sed -i '' 's/("path", str("直连"))/("path", str("东京中继"))/;s/("via", str("direct"))/("via", str("relay"))/' apps/mbui/src/sfapp/settings/fixture.mbt
+          sed -i '' 's/"via": "direct"/"via": "relay"/;s/"path": "直连"/"path": "东京中继"/' apps/mbui/src/sffixture/chat_fixture.mbt
           cat > "$RUNNER_TEMP/scene.drive" <<'DRIVE'
           timeout 20000
           wait 1000
