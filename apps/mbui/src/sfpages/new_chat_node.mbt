@@ -268,9 +268,7 @@ fn new_on_tree(v : @view.View, on : NewOn) -> Unit {
     // (the band at the foot narrow; wide, the composer alone)
     col.by_room(fn(band, room) {
       band
-      // (remove duplicate bottom glass band over the incoming chat composer once going, while notices & floating choices
-      // fade out smoothly along choices_out)
-      .glass(By(fn() { if wide() || (on.going)() { None } else { Some(@sf.glass_foot()) } }))
+      // Transparent bottom safe area (eliminates glass-on-glass stacking behind the liquid glass composer & capsules)
       .lines_up(Is(Some(Middle)))
       .padding(By(fn() { (0.0, if wide() { 0.0 } else { composer_foot_at(room.width()) }, 0.0, 0.0) }))
       |> ignore
@@ -507,7 +505,7 @@ fn new_capsule_node(
     made.val = Some(b)
     if floating {
       @sf.style_node(b, fn() { if marked() { glass_chooser_marked_box } else { glass_chooser_box } }, in_row=true)
-      b.glass(By(fn() { Some(@sf.glass_floating()) })) |> ignore
+      @sf.glass_capsule_node(b, interactive=true) |> ignore
     } else {
       @sf.style_node(b, fn() { new_capsule_in_row }, in_row=true)
       @sf.hover_ground_node(b, lit=Some(fn() { state.hovered() || state.pressed() || state.focus_shown() }))

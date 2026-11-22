@@ -63,6 +63,10 @@ pub fn viewer_head_node(
       }))
       .radius(Is(1.0e6))
       .glass(By(fn() { Some(glass()) }))
+      .edge(By(fn() { if h.glass_solid() { @lg.liquid_solid_edge() } else { (0.0, 0L) } }))
+      .shadow(By(fn() { glass_control_shadow() }))
+      .shadow_outside(Is(true))
+      .clips(Is(true))
       .max_width(By(fn() { Some(most()) }))
       |> ignore
       // its name and meta (fpTitle): the name first, its line's meta 10 after it; what gives way short of room

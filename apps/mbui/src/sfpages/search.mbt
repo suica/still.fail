@@ -212,9 +212,9 @@ let search_over_box : @ui.Style = @ui.css("w=Full h=Full bg=Bg")
 let search_bar_row : @ui.Style = @ui.css("row w=Full pl=S4 pr=S4 pt=S2 pb=S2 gap=S3 align=ACenter")
 
 ///|
-/// The field's ground (SearchPage's): a capsule of the ink at 6%.
+/// The field's ground (SearchPage's): a full-radius capsule; liquid glass is attached on the host node.
 // kept across runs: a value (no field of it changes)
-let search_field_ground : @ui.Style = @ui.style(w=Full, radius=Full, bg=@sf.search_ground)
+let search_field_ground : @ui.Style = @ui.css("w=Full radius=Full")
 
 ///|
 /// What it holds: its icon 8 before the words.
@@ -288,7 +288,30 @@ fn search_field_node(
       },
       fn(f) {
         field.val = Some(f)
-        @sf.style_node(f, fn() { search_field_box.then(search_field_room(@sf.theme().chat_list, at)) })
+        match at {
+          Whole => {
+            @sf.style_node_and(
+              f,
+              fn() { search_field_box.then(search_field_room(@sf.theme().chat_list, at)) },
+              fn() {
+                let show = !search_read().open && reveal() > 0.001
+                let glass = if show { Some(@sf.search_capsule_glass()) } else { None }
+                let edge = if show && f.glass_solid() { @sf.overlay_solid_edge() } else { (0.0, 0L) }
+                let shadow = if show { @sf.glass_overlay_shadow() } else { (0.0, 0.0, 0L) }
+                (glass, edge, shadow)
+              },
+              fn(look) {
+                let (glass, edge, shadow) = look
+                f.glass(Is(glass)).edge(Is(edge)).shadow(Is(shadow)) |> ignore
+              },
+            )
+            f.shadow_outside(Is(true)) |> ignore
+          }
+          Side | Tape =>
+            @sf.style_node(f, fn() {
+              search_field_box.then(@ui.style(bg=@sf.search_ground)).then(search_field_room(@sf.theme().chat_list, at))
+            })
+        }
         f
         .alpha(By(fn() { if search_read().open { 0.0 } else { reveal() } }))
         .presses(By(fn() { !search_read().open && reveal() > 0.001 }))
@@ -410,6 +433,11 @@ pub fn search_page_node(
       .basis(Is(Some(0.0)))
       .min_width(Is(Some(0.0)))
       .height(By(fn() { Some(@sf.theme().chat_list.band_h) }))
+      .radius(By(fn() { @sf.theme().chat_list.band_h / 2.0 }))
+      .glass(By(fn() { Some(@sf.search_capsule_glass()) }))
+      .edge(By(fn() { if slot.glass_solid() { @sf.overlay_solid_edge() } else { (0.0, 0L) } }))
+      .shadow(By(@sf.glass_overlay_shadow))
+      .shadow_outside(Is(true))
       // (as wide as the list's field there, narrowing to its room as 取消 comes in with its right edge)
       .margin(By(fn() { (0.0, 0.0, -(1.0 - u()) * cancel_w(), 0.0) }))
       // (from where it stood in the list: its top in the window then, to where it rests)

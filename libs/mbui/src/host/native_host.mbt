@@ -518,6 +518,11 @@ impl @hostapi.Host for Native with thread_cpu_ms(_) {
 }
 
 ///|
+impl @hostapi.Host for Native with display_hz(_) {
+  display_hz()
+}
+
+///|
 impl @hostapi.Host for Native with perf_state(_) {
   perf_state()
 }

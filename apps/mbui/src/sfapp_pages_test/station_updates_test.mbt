@@ -82,3 +82,30 @@ test "the app's own newer build and the stations' together, in a wide window: on
   // (a station under way, how far; one that failed, why)
   assert_true(t.find("下载中断：网络连接已断开") is Some(_), msg=t.words().map(fn(x) { x.0 }).join("|"))
 }
+
+///|
+test "the downloaded app update and its action remain readable in the combined list at wide and narrow widths" {
+  for win in [(1280.0, 800.0, 0), (390.0, 844.0, 2)] {
+    let (w, h, platform) = win
+    new_run()
+    let src = fixture("station-updates-app")
+    open_fixture_over("station-updates-app", src)
+    let t = @ui.Tester::new(fn(c) { view(c, src) }, tree=app_tree(src), w~, h~, platform~)
+    t.frame()
+    t.tells_update("{\"phase\":\"ready\",\"percent\":-1,\"error\":\"\",\"file\":\"stillfail-beta-0.1.5640.apk\",\"away\":false}")
+    t.run_for(@ui.move_most_ms)
+    let words = t.words().filter(fn(x) { x.5 > 0.5 }).map(fn(x) { x.0 }).join("|")
+    assert_true(words.contains("0.1.1300") && words.contains("0.1.5640") && words.contains("已下载"), msg="\{w}: \{words}")
+    assert_true(!words.contains("重启以更新到"), msg="\{w}: \{words}")
+    let button = t.query(Button, label="重启更新")
+    assert_true(button is Some(_), msg="\{w}: \{t.semantics_dump()}")
+    let (_, title_y, _, title_h) = t.rect_of("当前客户端").unwrap()
+    let (_, button_y, _, button_h) = button.unwrap().rect
+    let offset = button_y + button_h / 2.0 - title_y - title_h / 2.0
+    assert_true(offset > -4.0 && offset < 4.0, msg="\{w}: button is \{offset} from the first line")
+    let faults = t.squeeze_faults().filter(fn(f) { f.contains("0.1.1300") || f.contains("0.1.5640") })
+    assert_true(faults.is_empty(), msg="\{w}: \{Repr(faults)}")
+    t.click(Button, label="重启更新")
+    assert_true(t.update_asked().contains("apply"), msg="\{w}: \{Repr(t.update_asked())}")
+  }
+}

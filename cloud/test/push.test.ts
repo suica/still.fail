@@ -600,3 +600,35 @@ test("billed-fallback notices default off, reach only workspace managers who opt
     await h.close();
   }
 });
+
+test("profile login failure notices reach only workspace managers and open profiles without session", async () => {
+  const vapid = await vapidKeys();
+  const services = pushServices();
+  const h = await harness({ vapid, push: services.answer });
+  try {
+    const { id, station, aliceTokens, bobTokens } = await workspace(h);
+    const aliceUa = await browser();
+    const bobUa = await browser();
+    const aliceEp = "https://push.example/alice-manager-profile";
+    const bobEp = "https://push.example/bob-member-profile";
+    assert.equal((await register(h, aliceTokens, "POST", { kind: "web", endpoint: aliceEp, keys: { p256dh: aliceUa.p256dh, auth: aliceUa.auth }, kinds: { failed: true }, preview: true, lang: "zh" })).status, 204);
+    assert.equal((await register(h, bobTokens, "POST", { kind: "web", endpoint: bobEp, keys: { p256dh: bobUa.p256dh, auth: bobUa.auth }, kinds: { failed: true }, preview: true, lang: "zh" })).status, 204);
+
+    const profileNotice = { to: [], audience: "managers", kind: "failed", session: "profile:sh-1", thread: 0, title: "willow", by: "Claude Code", text: "登录已失效", at: 1790000000001 };
+    assert.deepEqual(await (await notify(h, station, [profileNotice])).json(), { sent: 1 });
+    assert.equal(services.to(bobEp).length, 0);
+    const [push] = services.to(aliceEp);
+    assert.ok(push);
+    const payload = JSON.parse(await decrypt(push.body, aliceUa));
+    assert.equal(payload.type, "notice");
+    assert.equal(payload.kind, "failed");
+    assert.equal(payload.tag, `${id}/${station.id}/profile:sh-1`);
+    assert.equal(payload.url, `/w/${id}/s/${station.id}/profiles`);
+    assert.equal(payload.workspace, id);
+    assert.equal(payload.station, station.id);
+    assert.equal(payload.at, "1790000000001");
+    assert.equal("session" in payload, false, "profile push omits session so Android skips notice.bring");
+  } finally {
+    await h.close();
+  }
+});

@@ -680,6 +680,7 @@ fn tester_make(
     increase_contrast: false,
     thermal_throttled: false,
     reduce_motion: false,
+    display_hz: 0.0,
     logs: [],
     image_sizes: {},
     image_loads: [],

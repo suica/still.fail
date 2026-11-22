@@ -55,6 +55,15 @@ pub fn vector_shapes(@pixels.Vector, Double, Double, tint? : Int64) -> Array[Sha
 
 // Types and methods
 #derive(Eq, @debug.Debug)
+pub(all) struct ContentLens {
+  blur : Double
+  refraction : Double
+  bezel : Double
+  alpha : Double
+}
+pub fn ContentLens::none() -> Self
+
+#derive(Eq, @debug.Debug)
 pub(all) struct CornerFit {
   least : Double
   most : Double
@@ -103,11 +112,13 @@ pub(all) struct Glass {
   zoom : Double
   strength : Double
   progressive : Bool
+  layer : Int
+  break_gap : Double
 }
 pub fn Glass::at_strength(Self, Double) -> Self
 pub fn Glass::clear(blur? : Double, tint? : Int64, solid? : Int64, saturation? : Double, rim? : Double, bezel? : Double, refraction? : Double, chroma? : Double, merge? : Double, adaptive? : Bool, spot? : (Double, Double)?, zoom? : Double, strength? : Double) -> Self
 pub fn Glass::frosted(blur~ : Double, tint~ : Int64, solid~ : Int64, saturation? : Double, rim_edge? : Double, rim_lit? : Double, rim_back? : Double, shares_capture? : Bool, contained? : Bool, progressive? : Bool, strength? : Double) -> Self
-pub fn Glass::liquid(blur? : Double, tint? : Int64, solid? : Int64, saturation? : Double, rim? : Double, bezel? : Double, refraction? : Double, chroma? : Double, merge? : Double, adaptive? : Bool, spot? : (Double, Double)?, zoom? : Double, strength? : Double) -> Self
+pub fn Glass::liquid(blur? : Double, tint? : Int64, solid? : Int64, saturation? : Double, rim? : Double, bezel? : Double, refraction? : Double, chroma? : Double, merge? : Double, adaptive? : Bool, spot? : (Double, Double)?, zoom? : Double, strength? : Double, layer? : Int, break_gap? : Double) -> Self
 pub fn Glass::sharing(Self) -> Self
 
 #derive(Eq, @debug.Debug)

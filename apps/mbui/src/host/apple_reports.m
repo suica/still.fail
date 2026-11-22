@@ -725,9 +725,44 @@ static sf_wd_state wd_state;
 
 static uint64_t sf_uptime_ms(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW) / 1000000ULL; }
 
+/// Where the log stops growing: the file is moved to ui-hangs.log.1 (one kept) and a new one begun.
+static const unsigned long long SF_HANG_LOG_MOST = 2ULL * 1024 * 1024;
+
+/// A line in this device's own hang log, Library/Logs/<bundle id>/ui-hangs.log, whether or not reports are on. Nothing
+/// here is sent. Written on a queue of its own, so the watchdog can write while the window thread is held.
+static void sf_hang_local(NSString *line) {
+  static dispatch_queue_t queue;
+  static dispatch_once_t once;
+  dispatch_once(&once, ^{
+    queue = dispatch_queue_create("stillfail-hang-log", DISPATCH_QUEUE_SERIAL);
+  });
+  NSString *build = sf_string(NSBundle.mainBundle.infoDictionary[@"CFBundleVersion"]) ?: @"-";
+  NSString *text = [NSString stringWithFormat:@"%@ build=%@ %@\n", sf_iso(floor(NSDate.date.timeIntervalSince1970 * 1000)), build, line];
+  dispatch_async(queue, ^{
+    NSFileManager *files = NSFileManager.defaultManager;
+    NSURL *library = [files URLsForDirectory:NSLibraryDirectory inDomains:NSUserDomainMask].firstObject;
+    NSString *dir = [[library.path stringByAppendingPathComponent:@"Logs"]
+        stringByAppendingPathComponent:NSBundle.mainBundle.bundleIdentifier ?: @"mbui"];
+    if (![files createDirectoryAtPath:dir withIntermediateDirectories:YES attributes:nil error:nil]) return;
+    NSString *path = [dir stringByAppendingPathComponent:@"ui-hangs.log"];
+    if ([files attributesOfItemAtPath:path error:nil].fileSize >= SF_HANG_LOG_MOST) {
+      NSString *older = [path stringByAppendingString:@".1"];
+      [files removeItemAtPath:older error:nil];
+      [files moveItemAtPath:path toPath:older error:nil];
+    }
+    FILE *f = fopen(path.fileSystemRepresentation, "a");
+    if (!f) return;
+    NSData *data = [text dataUsingEncoding:NSUTF8StringEncoding];
+    fwrite(data.bytes, 1, data.length, f);
+    fclose(f);
+  });
+}
+
 /// Persists a watchdog hang report first (so a force-kill during a deadlock still delivers it on next launch), then
 /// attempts immediate async delivery on `reports_queue` with the same deterministic UUID.
 static void sf_watchdog_record(uint64_t hang_ms) {
+  // (said while it is still held: a hang that never ends, the app force-quit, leaves this line and no `hang` line after it)
+  sf_hang_local([NSString stringWithFormat:@"watchdog: window thread held for %llu ms and still held", hang_ms]);
   if (!sf_has_key() || !sf_reporting()) return;
   double at = floor(NSDate.date.timeIntervalSince1970 * 1000);
   NSString *rid = [[NSUUID.UUID.UUIDString stringByReplacingOccurrencesOfString:@"-" withString:@""] lowercaseString];
@@ -1002,6 +1037,11 @@ int32_t mb_stillfail_tell(moonbit_string_t what_, moonbit_string_t a_, moonbit_s
     return 0;
   }
   // the window thread's hang, and what the app did while shown as it is hidden, as JSON (sf_hang)
+  // a long hang as the journal says it, for this device's own log (never sent)
+  if ([what isEqual:@"hang_local"]) {
+    sf_hang_local([@"hang: " stringByAppendingString:sf_ns_string(a_)]);
+    return 1;
+  }
   if ([what isEqual:@"hang"]) {
     sf_hang(sf_ns_string(a_), @"ui_hang");
     return 0;

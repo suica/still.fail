@@ -997,8 +997,7 @@ fn board_narrow(
   .offset(By(fn() { (0.0, -search_list_rise * away()) }))
   |> ignore
   p.box(fn(track) { board_track(track, src, tips, own, top, foot) }) |> ignore
-  // its chips under the bar over it, on that bar's glass (glass_bar's, drawn on from its foot: one pane of it, the
-  // columns passing under both), made with the board alone: the list's Home makes none of it
+  // its floating liquid glass filter capsules directly over the transparent scroll area under Home's scroll-edge
   p.box(fn(strip) {
     strip.over(Is(true)).lies_along(Is(Start)) |> ignore
     strip.box(fn(g) {
@@ -1006,7 +1005,6 @@ fn board_narrow(
       g
       .width_share(Is(1.0))
       .margin(By(fn() { (0.0, top() - board_chips_h(g), 0.0, 0.0) }))
-      .glass(By(fn() { Some(@sf.glass_bar()) }))
       |> ignore
       board_chips_node(g, src, own.ws)
     })
@@ -1681,10 +1679,8 @@ fn board_chip_look(c : @view.View, item : @sf.RadioRow, lane : String, count : (
   let lit = fn() { !on() && item.lit() }
   let hand = @motion.NodeWay::new(if @signals.untracked(lit) { 1.0 } else { 0.0 })
   c.reacts(lit, fn(l) { hand.go_ms(c, if l { 1.0 } else { 0.0 }, @sf.dur_ms) })
-  c
+  @sf.glass_capsule_node(c, min_height=Some(board_chip_h), radius=Some(1.0e6), interactive=true)
   .row(Is(true))
-  .min_height(Is(Some(board_chip_h)))
-  .radius(Is(1.0e6))
   .gap(Is(2.0))
   .lines_up(Is(Some(Middle)))
   .lies_along(Is(Middle))
@@ -1699,10 +1695,23 @@ fn board_chip_look(c : @view.View, item : @sf.RadioRow, lane : String, count : (
     if on() {
       p.accent_bg
     } else {
-      @sf.alpha(p.text, 0.05 + 0.04 * hand.shown(c))
+      let h = hand.shown(c)
+      if h > 0.001 {
+        @sf.alpha(p.text, 0.06 * h)
+      } else {
+        0L
+      }
     }
   }))
-  .edge(By(fn() { if c.focus_shown() { (@ui.tree_theme().focus_w, @ui.tree_theme().focus) } else { (0.0, 0L) } }))
+  .edge(By(fn() {
+    if c.focus_shown() {
+      (@ui.tree_theme().focus_w, @ui.tree_theme().focus)
+    } else if c.glass_solid() {
+      (@sf.control_edge_w, @sf.theme().p.line)
+    } else {
+      (0.0, 0L)
+    }
+  }))
   |> ignore
   @sf.words_node(c, fn() { @sfbase.board_lane_words(lane) }, fn() { if on() { chip_on_look } else { board_chip_words } }) |> ignore
   @sf.words_node(c, fn() { count().to_string() }, fn() { if on() { chip_on_look } else { chip_count_look } }) |> ignore

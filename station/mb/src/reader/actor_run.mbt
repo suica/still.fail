@@ -174,7 +174,7 @@ async fn Actors::called(self : Actors, a : Actor, method : String, args : Array[
             a.queued_retry = None
             return self.start_turn(a, r.kind, r.text, by=r.by)
           }
-          return self.start_turn(a, "resume", self.words(a, "GO_ON_AFTER_FAILED"))
+          return self.start_turn(a, "resume", self.words(a, "GO_ON_AFTER_FAILED"), fresh=true)
         }
         self.log(a, "info", "trying again a failed turn, as asked")
         let words_key = if cut_off_by_restart(last) {
@@ -184,7 +184,7 @@ async fn Actors::called(self : Actors, a : Actor, method : String, args : Array[
         } else {
           "GO_ON_AFTER_FAILED"
         }
-        self.start_turn(a, "resume", self.words(a, words_key))
+        self.start_turn(a, "resume", self.words(a, words_key), fresh=true)
       })
     }
     "reassign" => {
@@ -467,6 +467,8 @@ async fn Actors::stop(self : Actors, a : Actor) -> Json raise {
   let had_deferred = a.deferred_end is Some(_) || a.warm
   a.deferred_end = None
   a.warm = false
+  self.cancel_tools_retry(a)
+  a.tools_restarts = 0
   a.paused_cap = false
   a.cap_wait_notified = false
   a.force_session_cap = false
@@ -888,7 +890,17 @@ async fn Actors::release(self : Actors, a : Actor) -> Json raise {
         self.let_go(a)
         return
       }
-      self.continue_undeclared_end(a, d.lost, d.recorded, was_warm)
+      self.continue_undeclared_end(a, d.lost, d.unheard, d.recorded, was_warm)
+      return
+    }
+    if !self.held(a) && a.turn is None && a.tools_retry_deferred {
+      a.tools_retry_deferred = false
+      self.mirror(a)
+      if self.archived(a) {
+        self.let_go(a)
+        return
+      }
+      self.start_turn(a, "resume", self.words(a, "TOOLS_LOST"))
     }
   })
   Json::null()
@@ -1043,6 +1055,7 @@ async fn Actors::clear_now(
   a.codex_reloaded = None
   a.compacted_untold = false
   a.nudges = 0
+  self.cancel_tools_retry(a)
   a.tools_restarts = 0
   a.deferred_end = None
   a.warm = false
@@ -1074,6 +1087,7 @@ async fn Actors::suspend(self : Actors, a : Actor, why? : String = "the station 
     a.turn = None
     a.warm = false
     a.deferred_end = None
+    self.cancel_tools_retry(a)
     a.starting_turn = false
     a.queued_retry = None
     self.remove_turn_wait(a.key)
@@ -1134,6 +1148,7 @@ fn Actors::snapshot(self : Actors, a : Actor) -> Json {
     Some(d) =>
       ({
         "lost": jbool(d.lost),
+        "unheard": jbool(d.unheard),
         "recorded": match d.recorded { Some(r) => jstr(r); None => Json::null() },
       } : Json)
     None => Json::null()
@@ -1150,6 +1165,8 @@ fn Actors::snapshot(self : Actors, a : Actor) -> Json {
     "waitingMs": if a.waiting is Some(_) { jnum(max0(a.waiting_until - self.now)) } else { Json::null() },
     "waitingSeconds": jnum(a.waiting_seconds),
     "nudges": jnum(a.nudges.to_double()),
+    "toolsRestarts": jnum(a.tools_restarts.to_double()),
+    "toolsRetryMs": if a.tools_retry is Some(_) { jnum(max0(a.tools_retry_at - self.now)) } else if a.tools_retry_deferred { jnum(0.0) } else { Json::null() },
     "stopRequested": jbool(a.stop_requested),
     "refillMs": if a.refill is Some(_) { jnum(max0(a.refill_at - self.now)) } else { Json::null() },
     "idleMs": jnum(max0(self.now - a.idle_since)),
@@ -1204,6 +1221,7 @@ fn Actors::adopt(self : Actors, a : Actor, snap : Json, agent : Json, profile : 
     Some(Object(d)) =>
       Some({
         lost: d.get("lost") is Some(True),
+        unheard: d.get("unheard") is Some(True),
         recorded: str_of(d.get("recorded")),
       })
     _ => None
@@ -1219,6 +1237,7 @@ fn Actors::adopt(self : Actors, a : Actor, snap : Json, agent : Json, profile : 
   }
   a.notices = notices + a.notices
   a.nudges = num_of(snap.value("nudges")).unwrap_or(0.0).to_int()
+  a.tools_restarts = num_of(snap.value("toolsRestarts")).unwrap_or(0.0).to_int()
   a.stop_requested = snap.value("stopRequested") is Some(True)
   let runtime_changed = taken is Some(_) && str_of(row.value("runtime")) != Some(runtime)
   a.stale = runtime_changed || snap.value("stale") is Some(True)
@@ -1230,6 +1249,9 @@ fn Actors::adopt(self : Actors, a : Actor, snap : Json, agent : Json, profile : 
   }
   if num_of(snap.value("refillMs")) is Some(ms) {
     self.await_refill(a, self.now + ms)
+  }
+  if num_of(snap.value("toolsRetryMs")) is Some(ms) {
+    self.schedule_tools_retry(a, ms)
   }
   // (told now, its idle time with it: what `set_agent` told above was before it was taken up whole)
   self.mirror(a)
@@ -1244,6 +1266,7 @@ fn Actors::close(self : Actors, a : Actor) -> Unit {
   a.turn = None
   a.warm = false
   a.deferred_end = None
+  self.cancel_tools_retry(a)
   a.starting_turn = false
   a.queued_retry = None
   a.paused_cap = false
@@ -1532,6 +1555,7 @@ async fn Actors::pump(self : Actors, a : Actor, before_failures? : Int = -1) -> 
     reserved = true
   }
   a.nudges = 0
+  self.cancel_tools_retry(a)
   a.tools_restarts = 0
   a.deferred_end = None
   self.work_for(a, d.pending)
@@ -1707,6 +1731,7 @@ async fn Actors::start_turn(
   delivery? : Delivery? = None,
   passive? : Bool = false,
   notices_taken? : Int = 0,
+  fresh? : Bool = false,
 ) -> Unit raise {
   let own_slot = !a.starting_turn
   if own_slot {
@@ -1734,7 +1759,7 @@ async fn Actors::start_turn(
   if kind != "auth_retry" {
     a.auth_tried = []
   }
-  self.start_turn_body(a, kind, text, by, retry_about, delivery, passive, notices_taken) catch {
+  self.start_turn_body(a, kind, text, by, retry_about, delivery, passive, notices_taken, fresh) catch {
     e => {
       let turn = a.turn
       a.turn = None
@@ -1827,6 +1852,7 @@ async fn Actors::start_turn_body(
   delivery : Delivery?,
   passive : Bool,
   notices_taken : Int,
+  fresh : Bool,
 ) -> Unit raise {
   self.live_event(a.key, { "kind": "phase", "phase": "starting" })
   if (kind == "input" || kind == "job") && !self.holding(a) && !self.busy(a) &&
@@ -1880,7 +1906,7 @@ async fn Actors::start_turn_body(
   a.steered = []
   a.steered_for = []
   a.unread = []
-  self.begin_turn(a, kind, by, passive~)
+  self.begin_turn(a, kind, by, passive~, fresh~)
   if !(retry_about is Null) && a.turn is Some(t) {
     ignore(self.store(a, "setAbout", [jstr(t.id), [retry_about.value("thread").unwrap_or(Json::null()), retry_about.value("seq").unwrap_or(Json::null()), retry_about.value("ts").unwrap_or(Json::null())]]))
   }
@@ -1953,9 +1979,10 @@ async fn Actors::refused_thread(self : Actors, a : Actor) -> Unit raise {
 }
 
 ///|
-async fn Actors::begin_turn(self : Actors, a : Actor, kind : String, by : Json, passive? : Bool = false) -> Unit raise {
+async fn Actors::begin_turn(self : Actors, a : Actor, kind : String, by : Json, passive? : Bool = false, fresh? : Bool = false) -> Unit raise {
   a.queued_retry = None
-  if kind == "input" || kind == "job" {
+  self.cancel_tools_retry(a)
+  if fresh || kind == "input" || kind == "job" {
     a.last_said = ""
     a.posted = false
   }
@@ -2319,7 +2346,7 @@ async fn Actors::on_event(self : Actors, a : Actor, generation : Int, event : Js
           self.notify_store(a)
           if gone.length() > 0 && a.phase == "waiting" && !self.held(a) {
             self.log(a, "info", "its background work ended with its process while it waits; going on now", fields={ "stopped": jnum(gone.length().to_double()) })
-            self.start_turn(a, "resume", self.words(a, "BACKGROUND_STOPPED_WAITING"))
+            self.start_turn(a, "resume", self.words(a, "BACKGROUND_STOPPED_WAITING"), fresh=true)
           }
         }),
       )
@@ -2546,9 +2573,10 @@ async fn Actors::on_turn_ended(self : Actors, a : Actor, generation : Int, outco
   }
   // (a turn that said nothing, its process never having reached the station's tools at all: Antigravity CLI tells
   // nothing of an MCP server it could not connect, so no call of one failed; Node keeps what its token made, `toolsUnheard`)
+  let mut unheard_tools = false
   if a.tools_lost is None && kind == "completed" && !stop_requested && !a.posted && turn is Some({ declared: None, .. }) &&
     a.agent is Some(g) {
-    let unheard = self.rpc(a.key, "node.toolsUnheard", [jnum(g.handle.to_double())]) catch {
+    let unheard = self.rpc(a.key, "node.toolsUnheard", [jnum(g.handle.to_double()), jbool(a.nudges > 0)]) catch {
       e => {
         self.log(a, "warn", "toolsUnheard check failed", fields={ "error": jstr(e.to_string()) })
         Json::null()
@@ -2558,6 +2586,7 @@ async fn Actors::on_turn_ended(self : Actors, a : Actor, generation : Int, outco
       String(why) => {
         self.log(a, "warn", "the agent cannot reach the station's tools", fields={ "why": jstr(why) })
         a.tools_lost = Some(why)
+        unheard_tools = true
       }
       _ => ()
     }
@@ -2845,7 +2874,7 @@ async fn Actors::on_turn_ended(self : Actors, a : Actor, generation : Int, outco
     a.nudges = 0
     if retry is None && a.stopped.length() > 0 && !self.held(a) {
       self.log(a, "info", "its background work ended with its process while it waits; going on now", fields={ "stopped": jnum(a.stopped.length().to_double()) })
-      return self.start_turn(a, "resume", self.words(a, "BACKGROUND_STOPPED_WAITING"))
+      return self.start_turn(a, "resume", self.words(a, "BACKGROUND_STOPPED_WAITING"), fresh=true)
     }
     self.wait_ms(a, num_of(ends.unwrap().value("seconds")).unwrap_or(0.0), num_of(ends.unwrap().value("seconds")).unwrap_or(0.0) * 1000.0)
     ignore(self.deps(a, "idle", [jstr(a.key)]))
@@ -2874,12 +2903,16 @@ async fn Actors::on_turn_ended(self : Actors, a : Actor, generation : Int, outco
     return
   }
   if self.held(a) {
-    a.deferred_end = Some({ lost: lost is Some(_), recorded })
+    a.deferred_end = Some({ lost: lost is Some(_), unheard: unheard_tools, recorded })
     self.mirror(a)
     return
   }
-  self.continue_undeclared_end(a, lost is Some(_), recorded, warm)
+  self.continue_undeclared_end(a, lost is Some(_), unheard_tools, recorded, warm)
 }
+
+///|
+/// Backoff before the second toolsUnheard restart: outlasts a station handover or load spike longer than agy's 5s MCP preload timeout.
+let tools_retry_delay_ms : Double = 5000.0
 
 ///|
 /// Continues after a turn ended without declaring a state (immediately or once `release` lifts a hold).
@@ -2887,6 +2920,7 @@ async fn Actors::continue_undeclared_end(
   self : Actors,
   a : Actor,
   lost : Bool,
+  unheard : Bool,
   recorded : String?,
   warm : Bool,
 ) -> Unit raise {
@@ -2896,6 +2930,12 @@ async fn Actors::continue_undeclared_end(
       a.tools_restarts += 1
       self.log(a, "info", "the turn reached nobody; going on in a new process", fields={ "attempt": jnum(a.tools_restarts.to_double()) })
       self.start_turn(a, "resume", self.words(a, "TOOLS_LOST"))
+      return self.cool(a, warm)
+    }
+    if unheard && a.tools_restarts < 2 {
+      a.tools_restarts += 1
+      self.log(a, "info", "the turn still reached no tools; retrying in a new process after backoff", fields={ "attempt": jnum(a.tools_restarts.to_double()), "delayMs": jnum(tools_retry_delay_ms) })
+      self.schedule_tools_retry(a, tools_retry_delay_ms)
       return self.cool(a, warm)
     }
     a.tools_restarts = 0
@@ -3051,6 +3091,7 @@ async fn Actors::let_go(self : Actors, a : Actor) -> Unit raise {
   a.queued_retry = None
   a.deferred_end = None
   a.warm = false
+  self.cancel_tools_retry(a)
   self.mirror(a)
   a.nudges = 0
   let waited = a.waiting is Some(_)
@@ -3106,7 +3147,7 @@ async fn Actors::fire_wait(self : Actors, a : Actor, wait : Int, seconds : Doubl
     return self.wait_ms(a, seconds, seconds * 1000.0)
   }
   self.log(a, "info", "the wait is over without word; asking again", fields={ "seconds": jnum(seconds) })
-  self.start_turn(a, "nudge", self.words(a, "waitOver", args=[jnum(seconds)]))
+  self.start_turn(a, "nudge", self.words(a, "waitOver", args=[jnum(seconds)]), fresh=true)
 }
 
 ///|
@@ -3171,6 +3212,69 @@ fn Actors::await_refill(self : Actors, a : Actor, at : Double) -> Unit {
   a.refill = Some(refill)
   a.refill_at = at
   self.timer(a, "refill", at - self.now, async fn() { self.fire_refill(a, refill) })
+}
+
+///|
+fn Actors::cancel_tools_retry(self : Actors, a : Actor) -> Unit {
+  let had = a.tools_retry is Some(_) || a.tools_retry_deferred
+  a.tools_retry = None
+  a.tools_retry_deferred = false
+  if a.timers.get("tools_retry") is Some(cancel) {
+    cancel()
+    a.timers.remove("tools_retry")
+  }
+  if had {
+    self.mirror(a)
+  }
+}
+
+///|
+fn Actors::schedule_tools_retry(self : Actors, a : Actor, ms : Double) -> Unit {
+  a.tools_retries += 1
+  let id = a.tools_retries
+  a.tools_retry = Some(id)
+  a.tools_retry_at = self.now + ms
+  a.tools_retry_deferred = false
+  self.mirror(a)
+  self.timer(a, "tools_retry", ms, async fn() { self.fire_tools_retry(a, id) })
+}
+
+///|
+async fn Actors::fire_tools_retry(self : Actors, a : Actor, id : Int) -> Unit raise {
+  if a.tools_retry != Some(id) {
+    return
+  }
+  a.tools_retry = None
+  if self.held(a) {
+    a.tools_retry_deferred = true
+    self.mirror(a)
+    return
+  }
+  self.mirror(a)
+  if self.archived(a) {
+    return self.let_go(a)
+  }
+  if a.turn is Some(_) || self.busy(a) {
+    return
+  }
+  if self.turn_slots_full(a) {
+    a.queued_retry = Some({ kind: "resume", text: self.words(a, "TOOLS_LOST"), by: turn_for_nobody(), codex_retried: false })
+    self.enqueue_turn_wait(a)
+    return
+  }
+  let reserved = !a.starting_turn
+  if reserved {
+    a.starting_turn = true
+  }
+  defer {
+    if reserved {
+      a.starting_turn = false
+      if a.turn is None {
+        self.drain_turn_queue(drain_cap=!a.paused_cap)
+      }
+    }
+  }
+  self.start_turn(a, "resume", self.words(a, "TOOLS_LOST"))
 }
 
 ///|

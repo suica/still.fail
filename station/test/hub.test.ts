@@ -1848,6 +1848,325 @@ test("toolsUnheard survives handover for a process that never reached tools, and
   await second.close();
 });
 
+test("nudge-level toolsUnheard restarts a process that loses MCP mid-session or across handover", async () => {
+  // Case 1: process reaches tools on turn 1, then loses MCP on turn 2 -> nudged once, still 0 MCP requests -> restarted with TOOLS_LOST.
+  {
+    const heard = new Map<string, number>();
+    const r = new Rig({ maxNudges: 2, toolsHeard: heard });
+    const m = message();
+    await r.accept(m);
+    await settle();
+    const first = r.claude.last();
+    const key = first.options.route;
+    heard.set(key, 1);
+    await r.call(key, "chat_state", { kind: "all_done", done: "turn 1 done" });
+    first.complete();
+    await settle();
+
+    await r.accept(reply(m, "9999.1", "second turn"));
+    await settle();
+    first.says("I lost MCP on turn 2.");
+    first.complete();
+    await settle();
+    assert.ok(!first.disposed, "first undeclared end after reaching tools before is nudged");
+    assert.equal(r.claude.count(), 1);
+    assert.equal(untimed(first.prompts.at(-1)!), NUDGE);
+
+    first.says("Still no MCP after nudge.");
+    first.complete();
+    await settle();
+    assert.ok(first.disposed, "process with zero MCP requests during nudge is disposed");
+    assert.equal(r.claude.count(), 2);
+    const second = r.claude.last();
+    assert.notEqual(second, first);
+    assert.equal(second.options.resume, first.sessionId);
+    assert.deepEqual(second.prompts.map(untimed), [TOOLS_LOST]);
+    await r.close();
+  }
+
+  // Case 2: process reached tools before handover (snapshot omits toolsUnheard) -> loses MCP after handover -> 1 nudge then restarted with TOOLS_LOST.
+  {
+    const heard1 = new Map<string, number>();
+    const r1 = new Rig({ maxNudges: 2, toolsHeard: heard1 });
+    const m1 = message();
+    await r1.accept(m1);
+    await settle();
+    const old1 = r1.claude.last();
+    const key1 = old1.options.route;
+    heard1.set(key1, 1);
+    const handed1 = await r1.hub.handOver();
+    assert.equal(handed1.sessions[0]!.toolsUnheard, undefined);
+
+    const claude1 = new FakeDriver("claude");
+    const hub1 = r1.newHub({
+      chats: (id) => (id === "cl" ? r1.chat : undefined),
+      drivers: [claude1, new FakeDriver("codex")],
+      internal: false,
+      toolsHeard: new Map<string, number>(),
+    });
+    await hub1.takeUp();
+    hub1.recover();
+    await settle();
+    const taken1 = claude1.last();
+    taken1.complete();
+    await settle();
+    assert.ok(!taken1.disposed);
+    assert.equal(claude1.count(), 1);
+    assert.deepEqual(taken1.prompts.map(untimed), [NUDGE]);
+
+    taken1.complete();
+    await settle();
+    assert.ok(taken1.disposed, "post-handover process with zero MCP requests during nudge is disposed");
+    assert.equal(claude1.count(), 2);
+    assert.deepEqual(claude1.last().prompts.map(untimed), [TOOLS_LOST]);
+    await hub1.shutdown();
+    await r1.close();
+  }
+
+  // Case 3: handover happens mid-nudge -> snapshot carries nudgeUnheard -> adopting station catches 0 MCP requests and restarts with TOOLS_LOST.
+  {
+    const heard3 = new Map<string, number>();
+    const r3 = new Rig({ maxNudges: 2, toolsHeard: heard3 });
+    const m3 = message();
+    await r3.accept(m3);
+    await settle();
+    const old3 = r3.claude.last();
+    const key3 = old3.options.route;
+    heard3.set(key3, 1);
+    old3.complete();
+    await settle();
+    assert.equal(old3.prompts.length, 2);
+    assert.equal(untimed(old3.prompts[1]!), NUDGE);
+
+    const handed3 = await r3.hub.handOver();
+    assert.equal(handed3.sessions.length, 1);
+    assert.equal(handed3.sessions[0]!.nudgeUnheard, true);
+
+    const claude3 = new FakeDriver("claude");
+    const hub3 = r3.newHub({
+      chats: (id) => (id === "cl" ? r3.chat : undefined),
+      drivers: [claude3, new FakeDriver("codex")],
+      internal: false,
+      toolsHeard: new Map<string, number>(),
+    });
+    await hub3.takeUp();
+    hub3.recover();
+    await settle();
+    const taken3 = claude3.last();
+    taken3.complete();
+    await settle();
+    assert.ok(taken3.disposed, "mid-nudge handed-over process with zero MCP requests is disposed");
+    assert.equal(claude3.count(), 2);
+    assert.deepEqual(claude3.last().prompts.map(untimed), [TOOLS_LOST]);
+    await hub3.shutdown();
+    await r3.close();
+  }
+});
+
+test("codex session recovers from nudge-level toolsUnheard by restarting with TOOLS_LOST", async () => {
+  const heard = new Map<string, number>();
+  const r = new Rig({ maxNudges: 2, toolsHeard: heard });
+  const m = message();
+  await r.accept(m, "gpt");
+  await settle();
+  const first = r.codex.last();
+  first.says("I cannot reach tools.");
+  first.complete();
+  await settle();
+  assert.ok(!first.disposed, "codex first undeclared end is nudged");
+  assert.equal(r.codex.count(), 1);
+  assert.equal(untimed(first.prompts.at(-1)!), NUDGE);
+
+  first.says("Still cannot reach tools.");
+  first.complete();
+  await settle();
+  assert.ok(first.disposed, "codex session with zero MCP requests during nudge is disposed");
+  assert.equal(r.codex.count(), 2);
+  const second = r.codex.last();
+  assert.notEqual(second, first);
+  assert.deepEqual(second.prompts.map(untimed), [TOOLS_LOST]);
+  await r.close();
+});
+
+test("toolsUnheard retries a second time after a 5s backoff, cancels on stop or new message, and survives handover", async () => {
+  // Case 1: 1st unheard -> 0ms restart (#2); 2nd unheard -> 5s backoff -> restart (#3); 3rd unheard -> give_up with #3 disposed; new message starts #4.
+  {
+    const time = testClock();
+    const heard = new Map<string, number>();
+    const r = new Rig({ clock: time.clock, maxNudges: 2, toolsHeard: heard });
+    const m = message();
+    await r.accept(m);
+    await settle();
+    const p1 = r.claude.last();
+    p1.says("no tools 1");
+    p1.complete();
+    await settle();
+    assert.ok(p1.disposed);
+    assert.equal(r.claude.count(), 2);
+    const p2 = r.claude.last();
+    assert.deepEqual(p2.prompts.map(untimed), [TOOLS_LOST]);
+
+    p2.says("no tools 2");
+    p2.complete();
+    await settle();
+    assert.ok(p2.disposed);
+    assert.equal(r.claude.count(), 2, "second unheard restart waits 5s before starting process #3");
+
+    await time.adjust(4_999);
+    await settle();
+    assert.equal(r.claude.count(), 2, "does not start before 5s elapses");
+
+    await time.adjust(1);
+    await settle();
+    assert.equal(r.claude.count(), 3, "starts process #3 after 5s backoff");
+    const p3 = r.claude.last();
+    assert.deepEqual(p3.prompts.map(untimed), [TOOLS_LOST]);
+
+    p3.says("no tools 3");
+    p3.complete();
+    await settle();
+    assert.ok(p3.disposed, "process #3 is disposed even when giving up");
+    assert.equal(r.claude.count(), 3);
+    assert.ok(matches(r.chat.lastText(), ["未在对话中回复", "代为转发", "> no tools 3"]), r.chat.lastText());
+
+    await r.accept(reply(m, "9999.1", "try again"));
+    await settle();
+    assert.equal(r.claude.count(), 4, "a new message starts a fresh process #4");
+    await r.close();
+  }
+
+  // Case 2: a new user message during the 5s backoff cancels the timer.
+  {
+    const time = testClock();
+    const heard = new Map<string, number>();
+    const r = new Rig({ clock: time.clock, maxNudges: 2, toolsHeard: heard });
+    const m = message();
+    await r.accept(m);
+    await settle();
+    const key = r.claude.last().options.route;
+    r.claude.last().complete();
+    await settle();
+    r.claude.last().complete();
+    await settle();
+    assert.equal(r.claude.count(), 2);
+
+    await r.accept(reply(m, "9999.2", "new input during backoff"));
+    await settle();
+    assert.equal(r.claude.count(), 3);
+    const p3 = r.claude.last();
+    heard.set(key, 1);
+    await r.call(key, "chat_state", { kind: "all_done", done: "handled new input" });
+    p3.complete();
+    await settle();
+
+    await time.adjust(10_000);
+    await settle();
+    assert.equal(r.claude.count(), 3, "backoff timer was cancelled by new message");
+    assert.equal(p3.prompts.length, 1);
+    await r.close();
+  }
+
+  // Case 3: stop() during the 5s backoff cancels the timer.
+  {
+    const time = testClock();
+    const heard = new Map<string, number>();
+    const r = new Rig({ clock: time.clock, maxNudges: 2, toolsHeard: heard });
+    const m = message();
+    await r.accept(m);
+    await settle();
+    const key = r.claude.last().options.route;
+    r.claude.last().complete();
+    await settle();
+    r.claude.last().complete();
+    await settle();
+    assert.equal(r.claude.count(), 2);
+
+    await r.hub.stop(key);
+    await settle();
+    await time.adjust(10_000);
+    await settle();
+    assert.equal(r.claude.count(), 2, "backoff timer was cancelled by stop");
+    await r.close();
+  }
+
+  // Case 4: handover during the 5s backoff carries toolsRetryMs and toolsRestarts and resumes on schedule.
+  {
+    const time = testClock();
+    const heard = new Map<string, number>();
+    const r = new Rig({ clock: time.clock, maxNudges: 2, toolsHeard: heard });
+    const m = message();
+    await r.accept(m);
+    await settle();
+    r.claude.last().complete();
+    await settle();
+    r.claude.last().complete();
+    await settle();
+    assert.equal(r.claude.count(), 2);
+
+    await time.adjust(2_000);
+    await settle();
+    const handed = await r.hub.handOver();
+    assert.equal(handed.sessions.length, 1, "session in toolsRetry backoff is handed over");
+    assert.equal(handed.sessions[0]!.toolsRestarts, 2);
+    assert.equal(handed.sessions[0]!.toolsRetryMs, 3_000);
+
+    const claude2 = new FakeDriver("claude");
+    const hub2 = r.newHub({
+      chats: (id) => (id === "cl" ? r.chat : undefined),
+      drivers: [claude2, new FakeDriver("codex")],
+      internal: false,
+      toolsHeard: new Map<string, number>(),
+    });
+    await hub2.takeUp();
+    hub2.recover();
+    await settle();
+    assert.equal(claude2.count(), 0);
+
+    await time.adjust(2_999);
+    await settle();
+    assert.equal(claude2.count(), 0);
+
+    await time.adjust(1);
+    await settle();
+    assert.equal(claude2.count(), 1, "adopted session resumes after remaining backoff");
+    assert.deepEqual(claude2.last().prompts.map(untimed), [TOOLS_LOST]);
+    await hub2.shutdown();
+    await r.close();
+  }
+});
+
+test("waitOver resets posted so an unheard new process triggers toolsUnheard instead of all_done", async () => {
+  const time = testClock();
+  const heard = new Map<string, number>();
+  const r = new Rig({ clock: time.clock, maxNudges: 2, toolsHeard: heard });
+  const m = message();
+  await r.accept(m);
+  await settle();
+  const first = r.claude.last();
+  const key = first.options.route;
+  heard.set(key, 1);
+  await r.call(key, "chat_post", { to: `C1/${m.threadTs}`, text: "started work" });
+  await r.call(key, "chat_state", { kind: "waiting", seconds: 60, for: "job" });
+  first.complete();
+  await settle();
+
+  await r.hub.actors.get(key)!.evict(true);
+  await settle();
+  assert.ok(first.disposed);
+
+  await time.adjust(60_000);
+  await settle();
+  assert.equal(r.claude.count(), 2);
+  const second = r.claude.last();
+  second.says("no tools on waitOver");
+  second.complete();
+  await settle();
+  assert.ok(second.disposed, "unheard process on waitOver is disposed and restarted");
+  assert.equal(r.claude.count(), 3);
+  assert.deepEqual(r.claude.last().prompts.map(untimed), [TOOLS_LOST]);
+  await r.close();
+});
+
 test("a turn given up on for want of a state (回复即可继续) is tried again by its notice's 重试", async () => {
   const r = new Rig({ maxNudges: 0 });
   const m = message();

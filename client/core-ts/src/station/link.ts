@@ -390,6 +390,13 @@ export class Links {
     return this.#links.get(address)?.state.state !== "offline";
   }
 
+  /// Moves an offline link (not refused for a security mode) into connecting/retrying immediately so an urgent
+  /// request made right after `client.wake` (such as `notice.bring`) is not skipped before `#follow` wakes.
+  retryNow(address: string): void {
+    const link = this.#links.get(address);
+    if (link?.state.state === "offline" && link.state.cause !== "lock") this.#retrying(address);
+  }
+
   /// Whether its link is up now: a request to it not answered then was not answered for itself, not for its station
   /// being down, and nothing will say the station is back (`stationBack` is told as a link comes up).
   online(address: string): boolean {

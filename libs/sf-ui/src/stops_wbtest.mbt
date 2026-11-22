@@ -71,7 +71,7 @@ test "stops: a finger takes its thumb along the track, nothing picked on the way
   let (chosen, state, picks) = (@signals.signal(2), Stops::new(), [])
   let t = stops_run(labels, chosen, state, picks)
   let (x, y, w, h) = t.get(@ui.Role::Slider, label="思考深度").rect
-  let at = fn(i : Int) { x + w * (i.to_double() + 0.5) / 4.0 }
+  let at = fn(i : Int) { dclamp(x + w * i.to_double() / 3.0, x + 2.0, x + w - 2.0) }
   let mid = y + h / 2.0
   // down on the stop it is at, along to its first: the stop under the finger named as it goes, none picked
   t.touch(0, at(2), mid)
@@ -210,4 +210,40 @@ test "stops_node: liquid glass lens scale animation causes zero relayout (laid =
   )
   t.touch(2, x + w * 1.5 / 4.0, mid)
   t.run_for(@ui.move_most_ms * 2.0)
+}
+
+///|
+test "stops_node: zero hidden glass at rest, clear refraction lens while pressed, and settles back to 0 glass" {
+  for dark in [false, true] {
+    set_dark(Some(dark))
+    @ui.set_glass_solid(None)
+    let labels = ["低", "中", "高", "极高"]
+    let chosen = @signals.signal(1)
+    let state = Stops::new()
+    let t = @ui.Tester::new(fn(_c) {  }, w=360.0, h=200.0, dark~, platform=2)
+    t.check_looks(false)
+    @ui.set_view_app(
+      fn(root) {
+        root.padding(Is((20.0, 20.0, 20.0, 20.0))) |> ignore
+        stops_node(root, fn() { labels }, fn() { chosen.get() }, state, said="思考深度", on_pick=fn(i) { chosen.set(i) })
+        |> ignore
+      },
+      theme=ui_theme_now,
+    )
+    t.draw()
+    t.run_for(@ui.move_most_ms)
+    // Rest: zero hidden glass instances.
+    assert_eq(t.drawn_glass().length(), 0, msg="stops_node rest must draw 0 glass (dark=\{dark})")
+    let (x, y, w, h) = t.get(@ui.Role::Slider, label="思考深度").rect
+    let mid = y + h / 2.0
+    t.touch(0, x + w * 1.5 / 4.0, mid)
+    t.run_for(part_whole_ms)
+    let pressed_glass = t.drawn_glass()
+    assert_eq(pressed_glass.length(), 1, msg="stops_node held must draw 1 glass lens (dark=\{dark})")
+    assert_eq(pressed_glass[0].4, 6, msg="stops_node lens must be kind == 6")
+    t.touch(2, x + w * 1.5 / 4.0, mid)
+    t.run_for(@ui.move_most_ms * 2.0)
+    assert_eq(t.drawn_glass().length(), 0, msg="stops_node settled must return to 0 glass (dark=\{dark})")
+  }
+  set_dark(None)
 }

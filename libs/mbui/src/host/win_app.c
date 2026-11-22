@@ -2153,6 +2153,12 @@ double mb_host_thread_cpu_ms(void) {
   return (double)(k.QuadPart + u.QuadPart) / 10000.0;
 }
 
+// The display's refresh rate in Hz (@hostapi.display_hz; 0: unknown).
+double mb_host_display_hz(void) {
+  double period = display_period();
+  return period > 0.0 ? 1000.0 / period : 0.0;
+}
+
 double mb_host_mem_bytes(void) {
   PROCESS_MEMORY_COUNTERS_EX pmc = {sizeof pmc};
   if (!K32GetProcessMemoryInfo(GetCurrentProcess(), (PROCESS_MEMORY_COUNTERS *)&pmc, sizeof pmc)) return 0;

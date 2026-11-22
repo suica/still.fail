@@ -107,5 +107,32 @@ test "a source that ends before its entry leaves keeps its last live chat projec
   let (left_source, view) = left_page_source(base, 0)
   assert_true(left_source is Some(s) && physical_equal(s, source))
   assert_true(view is Some(v) && v.thread == Some(101.0), msg="ending the source must not erase the last live projection")
-  left_pages.clear()
+  left_pages_clear()
+}
+
+///|
+test "waking a parked entry cancels its pending left_pages record without misaligning other entries" {
+  page_sources.clear()
+  left_pages_clear()
+  let base = made_source()
+  let r1 : ChatRef = { station: "ws1/st1", session: "parked-wake", title: "", station_name: "" }
+  let r2 : ChatRef = { station: "ws1/st1", session: "actually-left", title: "", station_name: "" }
+  let s1 : Ref[Source?] = Ref(None)
+  let s2 : Ref[Source?] = Ref(None)
+  let t1 = @view.Tree::new(fn(v) { s1.val = Some(page_entry_source(base, v, 501)) })
+  let t2 = @view.Tree::new(fn(v) { s2.val = Some(page_entry_source(base, v, 502)) })
+  page_entry_read(501, s1.val.unwrap(), Chat(r1))
+  page_entry_read(502, s2.val.unwrap(), Chat(r2))
+  page_entry_parked(501, Chat(r1))
+  page_entry_left(502, Chat(r2))
+  // Entry 501 wakes back onto the stack in the same frame before pages_left runs.
+  page_entry_wake(501)
+  assert_eq(left_pages.length(), 2)
+  assert_true(left_page_cancelled(0), msg="woken entry is cancelled")
+  assert_false(left_page_cancelled(1), msg="other left entry remains active")
+  assert_true(physical_equal(left_page_source(base, 0).0.unwrap(), s1.val.unwrap()))
+  assert_true(physical_equal(left_page_source(base, 1).0.unwrap(), s2.val.unwrap()))
+  t1.dispose()
+  t2.dispose()
+  left_pages_clear()
 }

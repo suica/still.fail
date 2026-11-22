@@ -172,14 +172,37 @@ fn Ctx::words_over_details(self : Ctx) -> Array[(String, String, Double, Double,
   let ks : Array[Int] = []
   let rs : Array[(Double, Double, Double, Double)] = []
   let os : Array[Int] = []
+  let ls : Array[Int] = []
   // (who drew it, contrast.mbt's inst_by: each known here by a number of its own, an old view's node by its index, a
   // node of the window's tree's by one below them)
   let tree_nodes : Map[@view.NodeId, Int] = Map([])
   let who : Map[Int, InstBy] = Map([])
+  // (active foreground optical lens scope, kind == 8: clips child glyphs to its drawn rounded SDF and scales their alpha)
+  let mut lens_hdr = -1
+  let mut lens_end = -1
+  let mut lens_alpha = 1.0
+  let mut lens_x0 = 0.0
+  let mut lens_y0 = 0.0
+  let mut lens_x1 = 0.0
+  let mut lens_y1 = 0.0
   for k in 0..<self.ninst {
     let b = k * inst_size
     let kind = a[b + 5]
-    if (kind != 1.0 && kind != 3.0 && kind != 7.0) || a[b + 11] < words_over_seen_least {
+    if kind == 8.0 {
+      let child_n = a[b + 12].to_int()
+      if child_n > 0 {
+        lens_hdr = k
+        lens_end = k + 1 + child_n
+        lens_alpha = a[b + 11]
+        lens_x0 = a[b]
+        lens_y0 = a[b + 1]
+        lens_x1 = a[b] + a[b + 2]
+        lens_y1 = a[b + 1] + a[b + 3]
+      }
+      continue
+    }
+    let eff_alpha = if k < lens_end { a[b + 11] * lens_alpha } else { a[b + 11] }
+    if (kind != 1.0 && kind != 3.0 && kind != 7.0) || eff_alpha < words_over_seen_least {
       continue
     }
     let by = inst_by(k)
@@ -226,10 +249,16 @@ fn Ctx::words_over_details(self : Ctx) -> Array[(String, String, Double, Double,
     } else {
       (x0, y0, x1, y1)
     }
+    let (x0, y0, x1, y1) = if k < lens_end {
+      (dmax(x0, lens_x0), dmax(y0, lens_y0), dmin(x1, lens_x1), dmin(y1, lens_y1))
+    } else {
+      (x0, y0, x1, y1)
+    }
     if x1 > x0 && y1 > y0 {
       ks.push(k)
       rs.push((x0, y0, x1, y1))
       os.push(o)
+      ls.push(if k < lens_end { lens_hdr } else { -1 })
     }
   }
   let out = []
@@ -267,6 +296,10 @@ fn Ctx::words_over_details(self : Ctx) -> Array[(String, String, Double, Double,
           }
           let px = (ix0 + ix1) / 2.0
           let py = (iy0 + iy1) / 2.0
+          if (ls[p] >= 0 && !in_inst(a, ls[p] * inst_size, px, py)) ||
+            (ls[q] >= 0 && !in_inst(a, ls[q] * inst_size, px, py)) {
+            continue
+          }
           if !self.words_over_both_seen(ks[p], ks[q], px, py) {
             continue
           }

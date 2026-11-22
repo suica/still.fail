@@ -630,6 +630,8 @@ android-misc.updates.installingVersion
 android-misc.updates.ready
 android-misc.updates.readyAway
 android-misc.updates.readyQuit
+android-misc.updates.rowReady
+android-misc.updates.rowReadyAway
 android-misc.updates.retry
 android-misc.updates.updated
 android-misc.updates.waitWifi

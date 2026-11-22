@@ -520,6 +520,11 @@ fn tip_alphas(t : @ui.Tester) -> (Double, Double) {
     }
     if f[6] == "0" && x == rx && y == ry {
       ground = a
+    } else if f[6] == "6" && x == rx && y == ry {
+      match number_of(f[16]) {
+        Some(ga) => ground = ga
+        None => ()
+      }
     } else if f[6] == "1" && a > words {
       words = a
     }
@@ -602,7 +607,7 @@ fn tip_drawn_turns(which : String) -> Array[String] raise {
     let mut most = 0.0
     for line in t.drawlist().split("\n") {
       let f = line.split(" ").map(fn(v) { v.to_owned() }).to_array()
-      if f.length() < 21 || f[0] != "i" || f[6] != "0" {
+      if f.length() < 21 || f[0] != "i" || (f[6] != "0" && f[6] != "6") {
         continue
       }
       match (number_of(f[1]), number_of(f[2]), number_of(f[3]), number_of(f[4])) {

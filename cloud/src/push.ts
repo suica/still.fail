@@ -160,8 +160,9 @@ export async function stationNotify(request: Request, env: Env): Promise<Respons
   for (const n of notices) {
     const base = `${targets.workspace}/${station}`;
     // In each device's language, saying what was said only where it shows that.
+    const opensProfiles = n.kind === "billed" || (n.audience === "managers" && n.session.startsWith("profile:"));
     const payload = (lang: Lang, shows: Shows | null): Record<string, string> =>
-      n.kind === "billed"
+      opensProfiles
         ? {
             type: "notice",
             kind: n.kind,

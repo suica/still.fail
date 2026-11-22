@@ -16,6 +16,24 @@ let reported : Ref[Bool] = Ref(false)
 let hang_gate : HangGate = HangGate::new()
 
 ///|
+/// How long the window thread must have been held by one piece of work for its hang to be kept in this device's log.
+let hang_local_ms : Double = 500.0
+
+///|
+/// What this device's own hang log keeps of `h` (none: too short): its page, passes, their causes and parts, as the
+/// journal says them. Written by the host to a local file and never sent.
+fn hang_local_line(h : @ui.Hang) -> String? {
+  if h.stall_ms >= hang_local_ms { Some(h.said()) } else { None }
+}
+
+///|
+fn hang_keep_local(h : @ui.Hang) -> Unit {
+  if hang_local_line(h) is Some(line) {
+    host_tell("hang_local", line, "", 0, 0) |> ignore
+  }
+}
+
+///|
 /// The subscriptions a switch being timed took on (by their ids), until their first message.
 let timed : Map[Int, Bool] = Map([])
 
@@ -55,6 +73,8 @@ fn reports_start() -> Unit {
   // what a call in flight as the core failed says (StillFailCore.restartedText)
   @core.restarted_text.val = @sfapp.tr("android-misc.core.restarted")
   if host_tell("hello", "", "", 0, 0) == 0 {
+    // (a build that reports nothing still keeps its long hangs in this device's log)
+    @ui.hangs_told(Some(hang_keep_local))
     // (no host's error report: what the UI could not do as asked goes as the core's `client.error` span, to Cloud Trace
     // with the rest of its traces, and to the host's log; a page showing 这部分显示出错了 said nothing otherwise)
     @view.fault_told.val = Some(fn(said) {
@@ -95,6 +115,7 @@ fn reports_start() -> Unit {
   // is hidden, its hangs all counted (hangs per hour shown), the heaviest held sent before it and how many were not
   @ui.hangs_told(
     Some(fn(h) {
+      hang_keep_local(h)
       for s in hang_gate.offer(h) {
         host_tell("hang", s.json().stringify(), "", 0, 0) |> ignore
       }

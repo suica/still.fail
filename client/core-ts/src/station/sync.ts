@@ -473,6 +473,10 @@ export class StationsSync {
   /// it is held, or could not be read.
   bringPushed(address: string, session: string, seq: number | null): Effect.Effect<void, CoreError> {
     return Effect.gen({ self: this }, function* () {
+      if (session.startsWith("profile:") || session.startsWith("billed:")) return;
+      if (!this.#links.has(address)) return;
+      if (!this.reachable(address)) this.#links.retryNow(address);
+      if (!this.reachable(address)) return;
       const bound = () => {
         const data = this.#core.data;
         const thread = get(data.chatForSession(address, session), "thread");
@@ -486,11 +490,16 @@ export class StationsSync {
       };
       let thread = bound();
       if (thread === null) {
-        yield* this.ask(address, `session/${session}`, this.#session(address, session));
+        yield* Effect.ignore(this.ask(address, `session/${session}`, this.#session(address, session)));
         const threads = get(this.#core.data.get({ topic: "session", station: address, key: session }), "threads");
         thread = bound() ?? (Array.isArray(threads) ? threads.map((t) => u64(get(t, "id"))).find((id) => id !== null) ?? null : null);
       }
-      if (thread !== null) yield* this.channels.pushed(entriesOf(address, thread), seq, Priority.focused);
+      if (thread !== null) {
+        if (this.#core.data.thread(address, thread) === undefined) {
+          yield* Effect.ignore(this.ask(address, `thread/${thread}`, this.#threadSummary(address, thread)));
+        }
+        yield* this.channels.pushed(entriesOf(address, thread), seq, Priority.focused);
+      }
     });
   }
 

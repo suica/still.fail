@@ -105,8 +105,11 @@ pub fn switcher_node(v : @view.View, src : Source) -> Unit {
       across.box(fn(p) {
         @sf.style_node(p, fn() { switcher_panel.then(@ui.style(w=Fixed(room()))) }, in_row=true)
         p
-        .ground(By(fn() { @sf.panel_ground() }))
-        .shadow(By(fn() { (@sf.dialog_shadow, @sf.dialog_shadow_y, @sf.theme().p.shadow) }))
+        .glass(By(fn() { Some(@sf.dialog_glass()) }))
+        .edge(By(fn() { if p.glass_solid() { (1.0, @sf.panel_edge()) } else { (0.0, 0L) } }))
+        .shadow(By(@sf.glass_overlay_shadow))
+        .shadow_outside(Is(true))
+        .clips(Is(true))
         .alpha(By(fn() { look().alpha }))
         .scale(By(fn() { look().sx }))
         .offset(By(fn() { (look().dx, look().dy) }))
@@ -202,7 +205,7 @@ let switcher_surface : @sf.Surface = @sf.surface(switcher_edge, @sf.row_corner)
 let switcher_panel : @ui.Style = switcher_surface
   .style()
   .then(
-    @ui.style(w=Full, max_w=Fixed(switcher_w), border=B1, border_color=Line, clip=true),
+    @ui.style(w=Full, max_w=Fixed(switcher_w), clip=true),
   )
 
 ///|

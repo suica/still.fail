@@ -570,6 +570,8 @@
   "android-misc.updates.ready": "重启以更新到 {version}",
   "android-misc.updates.readyAway": "{from} → {to} 已下载，离开 {app} 一段时间后自动安装",
   "android-misc.updates.readyQuit": "{from} → {to} 已下载，退出 {app} 时自动安装",
+  "android-misc.updates.rowReady": "{from} → {to} 已下载",
+  "android-misc.updates.rowReadyAway": "{from} → {to} 已下载，将自动安装",
   "android-misc.updates.retry": "重试更新到 {version}",
   "android-misc.updates.updated": "{app} 已更新到 {version}，点按打开",
   "android-misc.updates.waitWifi": "连接 Wi‑Fi 后自动下载 · {size}",

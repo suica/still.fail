@@ -157,3 +157,68 @@ test "大屏 on a Mac: ⌘. closes a confirm as Escape does (a Mac's cancel), it
   t.run_for(@ui.move_most_ms)
   assert_eq((up, runs.val, @sf.presenting()), (true, 0, false))
 }
+
+///|
+fn rect_contains(
+  outer : (Double, Double, Double, Double),
+  inner : (Double, Double, Double, Double),
+) -> Bool {
+  inner.0 >= outer.0 - 0.5 &&
+  inner.1 >= outer.1 - 0.5 &&
+  inner.0 + inner.2 <= outer.0 + outer.2 + 0.5 &&
+  inner.1 + inner.3 <= outer.1 + outer.3 + 0.5
+}
+
+///|
+fn glass_nested_pairs(t : @ui.Tester) -> Int {
+  let ls = t.drawn_glass().filter(fn(g) { g.4 == 6 })
+  let mut count = 0
+  for i in 0..<ls.length() {
+    for j in 0..<ls.length() {
+      if i == j {
+        continue
+      }
+      let a = (ls[i].0, ls[i].1, ls[i].2, ls[i].3)
+      let b = (ls[j].0, ls[j].1, ls[j].2, ls[j].3)
+      if a.2 * a.3 >= b.2 * b.3 && rect_contains(a, b) {
+        count += 1
+      }
+    }
+  }
+  count
+}
+
+///|
+test "大屏: confirm_node, panel_centred_node, and ⌘K switcher emit single-layer liquid glass with zero nesting and degrade cleanly under MBUI_GLASS=solid" {
+  for dark in [false, true] {
+    for solid in [false, true] {
+      // 1. confirm_node
+      let t1 = confirm_wide()
+      @sf.set_dark(Some(dark))
+      @ui.set_glass_solid(if solid { Some(true) } else { None })
+      @sf.confirm("删除", "删除这个对话？", "删除", fn() {  })
+      t1.run_for(@ui.move_most_ms)
+      let dlg1 = t1.get(Dialog, label="删除").rect
+      let hits1 = t1
+        .drawn_glass()
+        .filter(fn(g) { g.4 == 6 && (g.0 - dlg1.0).abs() < 1.0 && (g.1 - dlg1.1).abs() < 1.0 })
+      assert_eq(hits1.length(), if solid { 0 } else { 1 }, msg="confirm dark=\{dark} solid=\{solid}")
+      assert_eq(glass_nested_pairs(t1), 0, msg="confirm nested glass dark=\{dark}")
+
+      // 2. ⌘K switcher_node
+      let t2 = confirm_wide()
+      @sf.set_dark(Some(dark))
+      @ui.set_glass_solid(if solid { Some(true) } else { None })
+      @sfdesk.switcher_open_with("")
+      t2.run_for(@ui.move_most_ms)
+      let dlg2 = t2.get(Dialog, label=@sf.t("web-main.switcher.search")).rect
+      let hits2 = t2
+        .drawn_glass()
+        .filter(fn(g) { g.4 == 6 && (g.0 - dlg2.0).abs() < 1.0 && (g.1 - dlg2.1).abs() < 1.0 })
+      assert_eq(hits2.length(), if solid { 0 } else { 1 }, msg="switcher dark=\{dark} solid=\{solid}")
+      assert_eq(glass_nested_pairs(t2), 0, msg="switcher nested glass dark=\{dark}")
+    }
+  }
+  @ui.set_glass_solid(None)
+  @sf.set_dark(None)
+}

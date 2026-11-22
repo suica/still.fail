@@ -243,6 +243,8 @@ fn ffi_cpu_ms() -> Double = "mbhost" "mb_host_cpu_ms"
 
 fn ffi_thread_cpu_ms() -> Double = "mbhost" "mb_host_thread_cpu_ms"
 
+fn ffi_display_hz() -> Double = "mbhost" "mb_host_display_hz"
+
 fn ffi_perf_state() -> Int = "mbhost" "mb_host_perf_state"
 
 fn ffi_set_perf(on : Int) = "mbhost" "mb_host_set_perf"
@@ -1119,6 +1121,11 @@ fn cpu_ms() -> Double {
 ///|
 fn thread_cpu_ms() -> Double {
   ffi_thread_cpu_ms()
+}
+
+///|
+fn display_hz() -> Double {
+  ffi_display_hz()
 }
 
 ///|

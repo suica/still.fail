@@ -717,8 +717,7 @@ fn bar_end_node(
         "info",
         fn() { tr("android-chat.info.title") },
         fn() {
-          let (x, y, iw, ih) = k.placed_window_now()
-          open_info(src, r, from=At(x, y, iw, ih), along=End)
+          open_info(src, r, from=Node(k), along=End)
         },
         icon_size=20.0,
       )
@@ -738,8 +737,7 @@ fn bar_end_node(
               None => ""
             }
             let chat = src.topic("chat", chat_params(r)).get().value
-            let (x, y, mw, mh) = more.placed_window_now()
-            @sfpages.open_chat_menu(src, w, r, @sfpages.chat_extra_items(src, r, chat), from=At(x, y, mw, mh), along=End)
+            @sfpages.open_chat_menu(src, w, r, @sfpages.chat_extra_items(src, r, chat), from=Node(more), along=End)
           },
           icon_size=18.0,
         )
@@ -754,17 +752,10 @@ fn bar_end_node(
 ///|
 /// Unified iOS 27 single-layer liquid glass floating capsule (30pt) for composer-top controls on Small screens.
 fn small_glass_capsule(b : @view.View) -> Unit {
-  b
+  @sf.glass_capsule_node(b, min_height=Some(30.0), radius=Some(999.0))
   .row(Is(true))
-  .min_height(Is(Some(30.0)))
-  .radius(Is(999.0))
   .lines_up(Is(Some(Middle)))
   .lies_along(Is(Middle))
-  .glass(By(fn() { Some(@sf.glass_floating().sharing()) }))
-  .edge(By(fn() { if b.glass_solid() { (@sf.control_edge_w, @sf.theme().p.line) } else { (0.0, 0L) } }))
-  .shadow(By(fn() { @sf.glass_control_shadow() }))
-  .shadow_outside(Is(true))
-  .clips(Is(true))
   |> ignore
 }
 

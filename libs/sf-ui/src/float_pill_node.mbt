@@ -22,9 +22,9 @@ pub fn float_pill_group_node(
 ) -> @view.View {
   parent.box(made_for=loc, fn(g) {
     let r = width / 2.0
-    let spot_sig : @signals.Signal[(Double, Double)?] = @signals.signal(None)
+    let fx_sig : @signals.Signal[((Double, Double)?, Int)] = @signals.signal((None, 0))
     let press_way = @motion.NodeWay::new(0.0)
-    let scope : PillPressScope = { pill: g, spot: spot_sig, press_way, count: 0 }
+    let scope : PillPressScope = { pill: g, fx: fx_sig, press_way, count: 0 }
     g
     .width(Is(Some(width)))
     .radius(Is(r))
@@ -32,7 +32,7 @@ pub fn float_pill_group_node(
     .padding(Is((pad, dmax(0.0, pad - float_pill_gap / 2.0), pad, dmax(0.0, pad - float_pill_gap / 2.0))))
     .lines_up(Is(Some(Middle)))
     .shrink(Is(0.0))
-    .glass(By(fn() { Some(glass_floating(spot=spot_sig.get()).sharing()) }))
+    .glass(By(fn() { Some(glass_floating(spot=fx_sig.get().0).sharing()) }))
     .scale(By(fn() { 1.0 + 0.05 * press_way.shown(g) }), about=At(0.5, 0.5))
     .edge(By(fn() { if g.glass_solid() { (control_edge_w, theme().p.line) } else { (0.0, 0L) } }))
     .shadow(By(fn() { glass_control_shadow() }))

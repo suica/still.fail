@@ -337,6 +337,9 @@ fn pages_left(src : Source) -> Unit {
   for i in 0..<left_pages.length() {
     let p = left_pages[i]
     let (page_src, chat_view) = @sfbase.left_page_source(src, i)
+    if @sfbase.left_page_cancelled(i) {
+      continue
+    }
     match p {
       Chat(r) => {
         match page_src {
@@ -386,7 +389,7 @@ fn pages_left(src : Source) -> Unit {
       _ => ()
     }
   }
-  left_pages.clear()
+  @sfbase.left_pages_clear()
   // (the pages put by on the stack's kept left told what they left: their sources put by at rest now, what they held
   // let go of as this frame ends)
   @sfbase.entries_kept_park_due()

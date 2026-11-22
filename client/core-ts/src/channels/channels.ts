@@ -278,6 +278,12 @@ export class Channels {
       if (n !== null) {
         this.#held.raise(c, n);
         if (this.#held.count(c, n, n) > 0) return Effect.void;
+        const span = this.#held.span(c);
+        if (span !== null && n > span.max + c.kind.page) {
+          if (!this.#reach.reached(c.station)) return Effect.void;
+          const from = Math.max(c.kind.first, n - c.kind.page + 1);
+          return Effect.ignore(this.range(c, from, n, { quiet: true }));
+        }
       } else if (c.kind.whole && this.#held.span(c) !== null) this.#unsure.add(keyOf(c));
       const asked = this.bring(c, priority, "latest");
       return asked === null ? Effect.void : Effect.ignore(Deferred.await(asked));

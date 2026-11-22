@@ -91,3 +91,11 @@ test "unsent_by records dropped hang page/trigger/top_kind and caps distinct key
   assert_eq(unsent_by.get("other"), Some(2))
   assert_eq(unsent_by.length(), 17)
 }
+
+///|
+test "this device's hang log keeps what held the window thread half a second or more, as the journal says it" {
+  assert_eq(hang_local_line(gate_hang(Stall, 1000.0, 499.0)), None)
+  let line = hang_local_line(gate_hang(Stall, 2000.0, 500.0)).unwrap()
+  assert_true(line.contains("page=Chat"), msg=line)
+  assert_true(line.contains("stall=500"), msg=line)
+}

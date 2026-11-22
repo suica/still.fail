@@ -202,8 +202,7 @@ fn home_top_bar_node(
           pill.box(fn(k) {
             @sf.round_key_node(k, "bell", fn() { tr("web-main.attention.entry") }, fn() {
               guard @signals.untracked(workspace) is Some(w) else { return }
-              let (x, y, wd, h) = k.placed_window_now()
-              @sfdesk.open_attention_panel(src, w, At(x, y, wd, h))
+              @sfdesk.open_attention_panel(src, w, Node(k))
             })
             k.show(fn() { workspace().map(fn(w) { @sfdesk.bell_lit(src, w) }).unwrap_or(false) }, fn(m) {
               m.over(Is(true)).row(Is(true)).lies_along(Is(End)).lines_up(Is(Some(Start))) |> ignore

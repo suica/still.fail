@@ -646,6 +646,8 @@ let en : Map[String, String] = {
   "android-misc.updates.ready": "Restart to update to {version}",
   "android-misc.updates.readyAway": "{from} → {to} downloaded. Installs by itself once you've been away from {app} for a while",
   "android-misc.updates.readyQuit": "{from} → {to} downloaded. Installs when you quit {app}",
+  "android-misc.updates.rowReady": "{from} → {to} downloaded",
+  "android-misc.updates.rowReadyAway": "{from} → {to} downloaded. Installs automatically",
   "android-misc.updates.retry": "Retry updating to {version}",
   "android-misc.updates.updated": "{app} updated to {version}. Tap to open",
   "android-misc.updates.waitWifi": "Downloads by itself on Wi‑Fi · {size}",

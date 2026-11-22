@@ -31,9 +31,6 @@ let screen_keep_margin : Double = 40.0
 ///|
 /// How a screen gone dark is blurred under its dark (ScreenViewer.kt Stage: BlurEffect(28.dp), a radius Skia takes as
 /// a deviation of 0.57735 of it and half a pixel: the glass's blur is the deviation).
-let screen_over_blur : Double = 28.0 * 0.57735 + 0.5
-
-///|
 /// A floating ground's shadow (the theme's `shadow=Sm`: 2 blurred, 1 down), which a style laid on a node does not
 /// draw (@sf.style_node): said on the node itself.
 fn floats_node(v : @view.View) -> Unit {
@@ -521,8 +518,8 @@ fn screen_over_node(o : @view.View, pg : ScreenPage) -> Unit {
     }))
     .width(By(fn() { Some(fit().w) }))
     .height(By(fn() { Some(fit().h) }))
-    .glass(By(fn() { Some(@ui.Glass::frosted(blur=screen_over_blur, tint=veil(), solid=veil())) }))
     |> ignore
+    @sf.glass_capsule_node(b, dark=true, sharing=false, solid=veil, tint=veil) |> ignore
     @sf.style_node(b, fn() { over_box })
     screen_ended_node(b, pg)
   })

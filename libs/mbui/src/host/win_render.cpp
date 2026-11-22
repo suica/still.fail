@@ -115,6 +115,10 @@ struct RenderWin {
   double ad_last_time;
   uint64_t ad_frame_serial;
   int ad_settling;
+  UINT last_present_count;
+  UINT last_sync_refresh;
+  int64_t last_present_qpc;
+  int has_frame_stats;
 };
 static RenderWin render_wins[MB_WINS];
 static RenderWin *rw = &render_wins[0];
@@ -167,7 +171,7 @@ static const char *shader_src =
     "#ifndef ONE_KIND\n"
     "#define ONE_KIND -1\n"
     "#endif\n"
-    "cbuffer U : register(b0) { float2 vp; float scale; float pad; };\n"
+    "cbuffer U : register(b0) { float2 vp; float scale; float pad; float2 origin; float2 _pad2; };\n"
     "// glass (src/ui/glass.mbt): where a point is in the blurred copy under it (uv = p * gmap.xy + gmap.zw, kept in guvc),\n"
     "// a liquid group's bounds, shapes, corners (x of each), how many\n"
     "cbuffer G : register(b1) { float4 gmap; float4 guvc; float4 ggb; float4 gshape[8]; float4 grad[8]; float4 gmisc; float4 gad_box[16]; float4 gad_meta; };\n"
@@ -195,7 +199,7 @@ static const char *shader_src =
     "                         (vid == 2 || vid == 3 || vid == 5) ? 1.0 : 0.0);\n"
     "  int kind = int(I.p.y + 0.5);\n"
     "  bool merged_liquid = kind == 6 && I.pd.w > 0.0;\n"
-    "  float grow = kind == 2 ? I.p.w * 3.0 + 2.0 : (kind == 6 && I.pd.w <= 0.0) ? 2.0 : ((kind == 0 || kind == 4 || kind == 5) ? 1.0 : 0.0);\n"
+    "  float grow = kind == 2 ? I.p.w * 3.0 + 2.0 : (kind == 6 && I.pd.w <= 0.0) ? 2.0 : ((kind == 0 || kind == 4 || kind == 5 || kind == 8) ? 1.0 : 0.0);\n"
     "  float2 pos = I.rect.xy - grow + corner * (I.rect.zw + 2.0 * grow);\n"
     "  if (merged_liquid) pos = lerp(ggb.xy, ggb.zw, corner);\n"
     "  // the pieces of shapes (kind 12): nothing drawn\n"
@@ -206,7 +210,8 @@ static const char *shader_src =
     "  if (I.rot.x != 0.0) { float2 d = pos - I.rot.yz; float c = cos(I.rot.x), s = sin(I.rot.x);\n"
     "    at = I.rot.yz + float2(c * d.x - s * d.y, s * d.x + c * d.y); }\n"
     "  VOut o;\n"
-    "  o.pos = float4(at.x / vp.x * 2.0 - 1.0, 1.0 - at.y / vp.y * 2.0, 0.0, 1.0);\n"
+    "  float2 rel = at - origin;\n"
+    "  o.pos = float4(rel.x / vp.x * 2.0 - 1.0, 1.0 - rel.y / vp.y * 2.0, 0.0, 1.0);\n"
     "  o.p = pos; o.cp = I.rot.w > 0.5 ? at : pos; o.rect = I.rect; o.prm = I.p; o.color = I.color; o.c2 = I.c2; o.clip = I.clip; o.pd = I.pd; o.rc = I.rc; o.rs = I.rs; o.rr = I.rr;\n"
     "  if (kind == 1) o.prm.x = I.rot.x;\n"
     "  if (kind == 4 && I.pd.z > 0.5) o.pd.x = I.rot.w;\n"
@@ -456,25 +461,21 @@ static const char *shader_src =
     "    float ext_cov = mb_contour_int(max(outward + 0.5, 0.0), edgeW)\n"
     "                  - mb_contour_int(max(outward - 0.5, 0.0), edgeW);\n"
     "    if (materialAlpha < 0.01 && ext_cov < 0.01) discard;\n"
-    "    bool is_clear = (I.prm.w <= 0.1 && col.a < 0.12);\n"
+    "    float regMix = smoothstep(0.105, 0.305, col.a);\n"
+    "    bool is_clear = (regMix <= 0.0);\n"
     "    bool is_adaptive = I.c2.z < -0.5;\n"
     "    float spot_raw = is_adaptive ? (-I.c2.z - 1.0) : I.c2.z;\n"
-    "    bool is_dark = (!is_clear && col.a >= 0.05 && luma(col.rgb) < 0.35);\n"
+    "    bool is_dark = (!is_clear && luma(col.rgb) < 0.35);\n"
     "    float inward = max(-d, 0.0);\n"
     "    float rawBevel = max(I.c2.y, 0.0);\n"
     "    float rawAmount = max(I.pd.y, 0.0);\n"
-    "    float bevel;\n"
-    "    float amount;\n"
-    "    if (!is_clear) {\n"
-    "      // refractionFitsShape = true (iOS 27 regular)\n"
-    "      bevel = min(rawBevel, 0.5 * halfMinor);\n"
-    "      amount = min(rawAmount, halfMinor);\n"
-    "    } else {\n"
-    "      // refractionFitsShape = false (iOS 27 clear)\n"
-    "      float lensScale = min(1.0, halfMinor / max(rawBevel, 0.001));\n"
-    "      bevel = rawBevel * lensScale;\n"
-    "      amount = rawAmount * lensScale;\n"
-    "    }\n"
+    "    float lensScale = min(1.0, halfMinor / max(rawBevel, 0.001));\n"
+    "    float clearBevel = rawBevel * lensScale;\n"
+    "    float clearAmount = rawAmount * lensScale;\n"
+    "    float regBevel = min(rawBevel, 0.5 * halfMinor);\n"
+    "    float regAmount = min(rawAmount, halfMinor);\n"
+    "    float bevel = lerp(clearBevel, regBevel, regMix);\n"
+    "    float amount = lerp(clearAmount, regAmount, regMix);\n"
     "    float2 surfaceNormal = float2(0.0, 0.0);\n"
     "    float shortening = 0.0;\n"
     "    float2 disp = float2(0.0, 0.0);\n"
@@ -614,6 +615,18 @@ static const char *shader_src =
     "        contourStr = 0.43; contourDirAmt = 0.77; bevelShadowStr = 0.036;\n"
     "        glintLum = 1.6; glintFaceGain = 0.0; glintVib = 2.85;\n"
     "      }\n"
+    "      if (regMix < 1.0) {\n"
+    "        emission = lerp(float3(0.126, 0.126, 0.126), emission, regMix);\n"
+    "        transmittance = lerp(0.90, transmittance, regMix);\n"
+    "        lift = lerp(0.10, lift, regMix);\n"
+    "        chromaGain = lerp(1.0, chromaGain, regMix);\n"
+    "        contourStr = lerp(0.25, contourStr, regMix);\n"
+    "        contourDirAmt = lerp(0.77, contourDirAmt, regMix);\n"
+    "        bevelShadowStr = lerp(0.04, bevelShadowStr, regMix);\n"
+    "        glintLum = lerp(1.2, glintLum, regMix);\n"
+    "        glintFaceGain = lerp(0.25, glintFaceGain, regMix);\n"
+    "        glintVib = lerp(1.5, glintVib, regMix);\n"
+    "      }\n"
     "    }\n"
     "    [branch] if (fogT > 0.001) {\n"
     "      float r1 = fogT * 2.6;\n"
@@ -684,6 +697,39 @@ static const char *shader_src =
     "    float extA = ext_cov * contourStr * contourDir * I.c2.w;\n"
     "    float visA = materialAlpha * I.c2.w;\n"
     "    return float4(result * visA, saturate(visA + extA)) * cover;\n"
+    "  }\n"
+    "  if (kind == 8) {\n"
+    "    float4 s_rr = max(max(I.rr.x, I.rr.y), max(I.rr.z, I.rr.w)) > 0.0 ? I.rr : I.prm.xxxx;\n"
+    "    float d = sd_rr(p, I.rect, s_rr);\n"
+    "    float materialAlpha = saturate(0.5 - d * scale);\n"
+    "    if (materialAlpha < 0.005) discard;\n"
+    "    float halfMinor = max(min(I.rect.z, I.rect.w) * 0.5, 1.0);\n"
+    "    float inward = max(-d, 0.0);\n"
+    "    float rawBevel = max(I.c2.y, 0.0);\n"
+    "    float rawAmount = max(I.c2.z, 0.0);\n"
+    "    float lensScale = min(1.0, halfMinor / max(rawBevel, 0.001));\n"
+    "    float bevel = rawBevel * lensScale;\n"
+    "    float amount = rawAmount * lensScale;\n"
+    "    float2 disp = float2(0.0, 0.0);\n"
+    "    if (inward < bevel && bevel > 0.001 && amount > 0.001) {\n"
+    "      float e = 0.5;\n"
+    "      float2 grad = float2(\n"
+    "        sd_rr(p + float2(e, 0.0), I.rect, s_rr) - sd_rr(p - float2(e, 0.0), I.rect, s_rr),\n"
+    "        sd_rr(p + float2(0.0, e), I.rect, s_rr) - sd_rr(p - float2(0.0, e), I.rect, s_rr)\n"
+    "      ) / (2.0 * e);\n"
+    "      float gradLen = length(grad);\n"
+    "      float2 surfaceNormal = gradLen > 0.0001 ? grad / gradLen : float2(0.0, 0.0);\n"
+    "      float shortening = sqrt(saturate(gradLen));\n"
+    "      float bevelX = 1.0 - saturate(inward / bevel);\n"
+    "      float mag = amount * (1.0 - sqrt(max(1.0 - bevelX * bevelX, 0.0))) * shortening;\n"
+    "      disp = surfaceNormal * (-mag);\n"
+    "    }\n"
+    "    float2 uv = (p + disp) * gmap.xy + gmap.zw;\n"
+    "    float4 fg = float4(0.0, 0.0, 0.0, 0.0);\n"
+    "    if (uv.x >= guvc.x && uv.x <= guvc.z && uv.y >= guvc.y && uv.y <= guvc.w) {\n"
+    "      fg = bd.SampleLevel(samp, uv, 0);\n"
+    "    }\n"
+    "    return fg * (materialAlpha * col.a) * cover;\n"
     "  }\n"
     "  float2 hs = I.rect.zw * 0.5;\n"
     "  float2 c = I.rect.xy + hs;\n"
@@ -897,31 +943,62 @@ static const char *prog_src =
     "  float kf = pc[3].y;\n"
     "  float4 m0 = pc[4], m1 = pc[5], m2 = pc[6], m3 = pc[7];\n"
     "  if (kf < 0.5) return lv0.SampleLevel(samp, clamp(pos.xy * m0.xy, m0.xy * 0.5, m0.zw), 0);\n"
-    "  float sig1 = pow(sp, 1.0 / kf);\n"
     "  float r = saturate(ramp);\n"
-    "  float target_px = r <= 0.0 ? 0.0 : sp * pow(r, 1.15);\n"
+    "  if (r <= 0.0) return lv0.SampleLevel(samp, clamp(pos.xy * m0.xy, m0.xy * 0.5, m0.zw), 0);\n"
+    "  if (r >= 1.0) {\n"
+    "    int ki = int(kf + 0.5);\n"
+    "    if (ki <= 1) return lv1.SampleLevel(samp, clamp(pos.xy * m1.xy, m1.xy * 1.0, m1.zw), 0);\n"
+    "    if (ki == 2) return lv2.SampleLevel(samp, clamp(pos.xy * m2.xy, m2.xy * 2.0, m2.zw), 0);\n"
+    "    return lv3.SampleLevel(samp, clamp(pos.xy * m3.xy, m3.xy * 4.0, m3.zw), 0);\n"
+    "  }\n"
+    "  float sig1 = pow(sp, 1.0 / kf);\n"
+    "  float target_px = sp * pow(r, 1.15);\n"
     "  if (target_px <= sig1 || kf <= 1.05) {\n"
     "    float2 uv0_min = m0.xy * 0.5, uv0_max = m0.zw;\n"
     "    float2 c_uv = pos.xy * m0.xy;\n"
     "    float4 g_small;\n"
     "    if (target_px <= 0.01) {\n"
     "      g_small = lv0.SampleLevel(samp, clamp(c_uv, uv0_min, uv0_max), 0);\n"
+    "    } else if (target_px <= 0.55) {\n"
+    "      // Exact separable 3x3 Gaussian via 2x2 bilinear taps (center weight 0.5 split across +-o1)\n"
+    "      float inv2 = -0.5 / (target_px * target_px);\n"
+    "      float w1 = exp(inv2);\n"
+    "      float o1 = w1 / (0.5 + w1);\n"
+    "      float2 ox = float2(o1, 0.0) * m0.xy;\n"
+    "      float2 oy = float2(0.0, o1) * m0.xy;\n"
+    "      g_small = (lv0.SampleLevel(samp, clamp(c_uv - ox - oy, uv0_min, uv0_max), 0) +\n"
+    "                 lv0.SampleLevel(samp, clamp(c_uv + ox - oy, uv0_min, uv0_max), 0) +\n"
+    "                 lv0.SampleLevel(samp, clamp(c_uv - ox + oy, uv0_min, uv0_max), 0) +\n"
+    "                 lv0.SampleLevel(samp, clamp(c_uv + ox + oy, uv0_min, uv0_max), 0)) * 0.25;\n"
     "    } else {\n"
-    "      float r_tap = target_px * 1.5;\n"
-    "      float2 d0 = float2(r_tap, 0.0) * m0.xy;\n"
-    "      float2 d1 = float2(0.0, r_tap) * m0.xy;\n"
-    "      float2 dd = float2(r_tap * 0.70710678, r_tap * 0.70710678) * m0.xy;\n"
-    "      g_small  = lv0.SampleLevel(samp, clamp(c_uv, uv0_min, uv0_max), 0) * 0.25;\n"
-    "      g_small += (lv0.SampleLevel(samp, clamp(c_uv + d0, uv0_min, uv0_max), 0) +\n"
-    "                  lv0.SampleLevel(samp, clamp(c_uv - d0, uv0_min, uv0_max), 0) +\n"
-    "                  lv0.SampleLevel(samp, clamp(c_uv + d1, uv0_min, uv0_max), 0) +\n"
-    "                  lv0.SampleLevel(samp, clamp(c_uv - d1, uv0_min, uv0_max), 0)) * 0.125;\n"
-    "      g_small += (lv0.SampleLevel(samp, clamp(c_uv + dd, uv0_min, uv0_max), 0) +\n"
-    "                  lv0.SampleLevel(samp, clamp(c_uv - dd, uv0_min, uv0_max), 0) +\n"
-    "                  lv0.SampleLevel(samp, clamp(c_uv + float2(dd.x, -dd.y), uv0_min, uv0_max), 0) +\n"
-    "                  lv0.SampleLevel(samp, clamp(c_uv + float2(-dd.x, dd.y), uv0_min, uv0_max), 0)) * 0.0625;\n"
+    "      // Exact separable 7x7 Gaussian via 4x4 bilinear taps (zero gaps, zero comb ghosting)\n"
+    "      float inv2 = -0.5 / (target_px * target_px);\n"
+    "      float w1 = exp(inv2);\n"
+    "      float w2 = exp(4.0 * inv2);\n"
+    "      float w3 = exp(9.0 * inv2);\n"
+    "      float W1 = 0.5 + w1;\n"
+    "      float W2 = w2 + w3;\n"
+    "      float o1 = w1 / W1;\n"
+    "      float o2 = (2.0 * w2 + 3.0 * w3) / max(W2, 1e-6);\n"
+    "      float inv_sum = 0.5 / (W1 + W2);\n"
+    "      float p1 = W1 * inv_sum;\n"
+    "      float p2 = W2 * inv_sum;\n"
+    "      float ox[4] = {-o2, -o1, o1, o2};\n"
+    "      float pw[4] = {p2, p1, p1, p2};\n"
+    "      g_small = float4(0.0, 0.0, 0.0, 0.0);\n"
+    "      [unroll] for (int iy = 0; iy < 4; iy++) {\n"
+    "        float4 row = float4(0.0, 0.0, 0.0, 0.0);\n"
+    "        float uy = clamp(c_uv.y + ox[iy] * m0.y, uv0_min.y, uv0_max.y);\n"
+    "        [unroll] for (int ix = 0; ix < 4; ix++) {\n"
+    "          float ux = clamp(c_uv.x + ox[ix] * m0.x, uv0_min.x, uv0_max.x);\n"
+    "          row += lv0.SampleLevel(samp, float2(ux, uy), 0) * pw[ix];\n"
+    "        }\n"
+    "        g_small += row * pw[iy];\n"
+    "      }\n"
     "    }\n"
-    "    float blend1 = smoothstep(sig1 * 0.65, sig1, target_px);\n"
+    "    float blend_lo = min(1.1, sig1 * 0.45);\n"
+    "    float bt = saturate((target_px - blend_lo) / max(sig1 - blend_lo, 1e-4));\n"
+    "    float blend1 = bt > 0.0 ? pow(bt, 1.8) : 0.0;\n"
     "    if (blend1 > 0.0) {\n"
     "      float4 c_lv1 = lv1.SampleLevel(samp, clamp(pos.xy * m1.xy, m1.xy * 1.0, m1.zw), 0);\n"
     "      return lerp(g_small, c_lv1, blend1);\n"
@@ -1252,7 +1329,7 @@ void *mb_render_views_visual_of(int wid) {
 #define MB_KIND_LIQUID_SINGLE 13
 #define MB_KINDS 14
 static int has_own_ps(int kind) {
-  return (kind >= 0 && kind <= 7) || kind == 10 || kind == 11 || kind == MB_KIND_LIQUID_SINGLE;
+  return (kind >= 0 && kind <= 8) || kind == 10 || kind == 11 || kind == MB_KIND_LIQUID_SINGLE;
 }
 static ID3D11PixelShader *kps[MB_KINDS];
 static HANDLE kinds_thread;
@@ -1324,7 +1401,7 @@ static void make_pipeline(void) {
   gp->Release();
   ap->Release();
 
-  D3D11_BUFFER_DESC ud = {16, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER, 0, 0, 0};
+  D3D11_BUFFER_DESC ud = {32, D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER, 0, 0, 0};
   dev->CreateBuffer(&ud, NULL, &ubuf);
   D3D11_BUFFER_DESC pd = {32 + sizeof(MBContained), D3D11_USAGE_DEFAULT, D3D11_BIND_CONSTANT_BUFFER, 0, 0, 0};
   dev->CreateBuffer(&pd, NULL, &pbuf);
@@ -1576,6 +1653,28 @@ static level level_tex(DXGI_FORMAT format, int w, int h) {
 
 static void glass_free(void);
 static void slots_invalidate(void);
+static level lens_lv[2];
+static int lens_w, lens_h;
+
+static int ensure_lens_levels(int w, int h) {
+  if (lens_lv[0].t && lens_w >= w && lens_h >= h) return 1;
+  for (int j = 0; j < 2; j++) {
+    if (lens_lv[j].srv) lens_lv[j].srv->Release();
+    if (lens_lv[j].rt) lens_lv[j].rt->Release();
+    if (lens_lv[j].t) lens_lv[j].t->Release();
+    lens_lv[j] = level{};
+  }
+  lens_w = w > lens_w ? w : lens_w;
+  lens_h = h > lens_h ? h : lens_h;
+  for (int j = 0; j < 2; j++) {
+    lens_lv[j] = level_tex(DXGI_FORMAT_B8G8R8A8_UNORM, lens_w, lens_h);
+    if (!lens_lv[j].t || !lens_lv[j].rt || !lens_lv[j].srv) {
+      glass_free();
+      return 0;
+    }
+  }
+  return 1;
+}
 
 static int ensure_levels(int w, int h) {
   if (lv[0].t && lv_w >= w && lv_h >= h) return 1;
@@ -1825,6 +1924,7 @@ static void ad_finalize_frame(RenderWin *w, int whole_frame, uint64_t serial) {
 
 struct Grab {
   int px0, py0, w, h, k, contained, progressive;
+  int vis_x, vis_y, vis_w, vis_h;
   float sg, sp;
   float fade[4], fadex[4];
   GU g;
@@ -1875,6 +1975,13 @@ static void glass_free(void) {
     ad_forget(&render_wins[k]);
   }
   lv_w = lv_h = 0;
+  for (int j = 0; j < 2; j++) {
+    if (lens_lv[j].srv) lens_lv[j].srv->Release();
+    if (lens_lv[j].rt) lens_lv[j].rt->Release();
+    if (lens_lv[j].t) lens_lv[j].t->Release();
+    lens_lv[j] = level{};
+  }
+  lens_w = lens_h = 0;
 }
 
 // Glass's levels (as big as the largest capture yet) let go of once this many frames in a row drew no glass (a sheet
@@ -2078,6 +2185,17 @@ static int grab_of(Grab *m, const float *f, int32_t start, int32_t end, int32_t 
       m->fade[i] = a[52 + i];
       m->fadex[i] = a[56 + i];
     }
+    int vx0 = (int)floorf(x0 * sc) - px0 - 2;
+    int vy0 = (int)floorf(y0 * sc) - py0 - 2;
+    int vx1 = (int)ceilf(x1 * sc) - px0 + 2;
+    int vy1 = (int)ceilf(y1 * sc) - py0 + 2;
+    if (vx0 < 0) vx0 = 0;
+    if (vy0 < 0) vy0 = 0;
+    if (vx1 > m->w) vx1 = m->w;
+    if (vy1 > m->h) vy1 = m->h;
+    if (vx1 <= vx0) { vx0 = 0; vx1 = m->w; }
+    if (vy1 <= vy0) { vy0 = 0; vy1 = m->h; }
+    m->vis_x = vx0; m->vis_y = vy0; m->vis_w = vx1 - vx0; m->vis_h = vy1 - vy0;
   }
   float sp = blur_r * sc;
   int k = 0;
@@ -2111,8 +2229,13 @@ static void show_blur(const Grab *m, const level *L) {
   float d = (float)(1 << sk);
   gu.map[0] = sc / d / L->w; gu.map[1] = sc / d / L->h;
   gu.map[2] = -(float)m->px0 / d / L->w; gu.map[3] = -(float)m->py0 / d / L->h;
-  gu.uvc[0] = 0.5f / L->w; gu.uvc[1] = 0.5f / L->h;
-  gu.uvc[2] = (lw[sk] - 0.5f) / L->w; gu.uvc[3] = (lh[sk] - 0.5f) / L->h;
+  if (m->progressive) {
+    gu.uvc[0] = ((float)m->vis_x + 0.5f) / L->w; gu.uvc[1] = ((float)m->vis_y + 0.5f) / L->h;
+    gu.uvc[2] = ((float)(m->vis_x + m->vis_w) - 0.5f) / L->w; gu.uvc[3] = ((float)(m->vis_y + m->vis_h) - 0.5f) / L->h;
+  } else {
+    gu.uvc[0] = 0.5f / L->w; gu.uvc[1] = 0.5f / L->h;
+    gu.uvc[2] = (lw[sk] - 0.5f) / L->w; gu.uvc[3] = (lh[sk] - 0.5f) / L->h;
+  }
 }
 
 static int reaches(const float *f, int32_t i, int32_t run, const float g[4]) {
@@ -2129,15 +2252,82 @@ static int reaches(const float *f, int32_t i, int32_t run, const float g[4]) {
 
 static int under_take(const float *f, int32_t start, int32_t count, int32_t pieces, const Grab *m) {
   float sc = (float)vscale;
-  float g[4] = {(float)m->px0 / sc - 1.0f, (float)m->py0 / sc - 1.0f, (float)(m->px0 + m->w) / sc + 1.0f,
-                (float)(m->py0 + m->h) / sc + 1.0f};
-  int32_t whole = 0, run = 0;
-  for (int32_t i = 0; i < start; i++) {
-    float tid = f[(size_t)i * MB_INST + 20];
-    if (i > 0 && tid != f[(size_t)(i - 1) * MB_INST + 20]) run = i;
-    int k = (int)(f[(size_t)i * MB_INST + 5] + 0.5f);
-    int sees = tid < 0.0f || k == 7 || ((k == 10 || k == 11) && f[(size_t)i * MB_INST + 23] > 0.0f);
-    if (sees && reaches(f, i, run, g)) whole = i + 1;
+  float dep[4] = {(float)m->px0 / sc - 1.0f, (float)m->py0 / sc - 1.0f, (float)(m->px0 + m->w) / sc + 1.0f,
+                  (float)(m->py0 + m->h) / sc + 1.0f};
+  float seen_tids[32];
+  int seen_n = 0;
+  for (int pass = 0; pass < 4; pass++) {
+    int grew = 0;
+    for (int32_t i = start - 1; i >= 0; i--) {
+      const float *bi = f + (size_t)i * MB_INST;
+      float tid = bi[20];
+      int k = (int)(bi[5] + 0.5f);
+      int is_glass = tid < 0.0f;
+      int is_ad = k == 7 || ((k == 10 || k == 11) && bi[23] > 0.0f);
+      if (!is_glass && !is_ad) continue;
+      int32_t run = i;
+      if (is_glass) {
+        while (run > 0 && f[(size_t)(run - 1) * MB_INST + 20] == tid) run--;
+      }
+      if (!reaches(f, i, run, dep)) continue;
+      if (is_glass) {
+        int already = 0;
+        for (int s = 0; s < seen_n; s++) {
+          if (seen_tids[s] == tid) { already = 1; break; }
+        }
+        if (already) continue;
+        if (seen_n < 32) seen_tids[seen_n++] = tid;
+        int32_t first_i = run;
+        for (int32_t j = 0; j < run; j++) {
+          if (f[(size_t)j * MB_INST + 20] == tid) { first_i = j; break; }
+        }
+        const float *a = f + (size_t)first_i * MB_INST;
+        int gkind = (int)(a[5] + 0.5f);
+        int is_contained = (gkind == 5 && a[7] < 0.0f);
+        float blur_r = (gkind == 6 && a[7] < 0.0f) ? 0.0f : fabsf(a[7]);
+        int merged_liquid = (gkind == 6 && a[23] > 0.0f);
+        int unmerged_liquid = (gkind == 6 && !merged_liquid);
+        float margin = is_contained ? 0.0f : 3.0f * blur_r + (gkind == 6 ? a[21] * (1.0f + fabsf(a[22])) + fmaxf(a[23], 0.0f) : 0.0f) + 2.0f;
+        float gx0 = 1e9f, gy0 = 1e9f, gx1 = -1e9f, gy1 = -1e9f;
+        for (int32_t j = first_i; j < count; j++) {
+          const float *b = f + (size_t)j * MB_INST;
+          if (b[20] != tid) continue;
+          float bx0, by0, bx1, by1;
+          if (gkind == 6) {
+            float m23 = fmaxf(unmerged_liquid ? b[23] : a[23], 0.0f);
+            bx0 = b[0] - m23; by0 = b[1] - m23; bx1 = b[0] + b[2] + m23; by1 = b[1] + b[3] + m23;
+            if (unmerged_liquid) {
+              float bm = 3.0f * blur_r + b[21] * (1.0f + fabsf(b[22])) + m23 + 2.0f;
+              if (bm > margin) margin = bm;
+            }
+          } else {
+            bx0 = b[0] > b[16] ? b[0] : b[16]; by0 = b[1] > b[17] ? b[1] : b[17];
+            bx1 = b[0] + b[2] < b[18] ? b[0] + b[2] : b[18]; by1 = b[1] + b[3] < b[19] ? b[1] + b[3] : b[19];
+          }
+          if (bx0 < gx0) gx0 = bx0;
+          if (by0 < gy0) gy0 = by0;
+          if (bx1 > gx1) gx1 = bx1;
+          if (by1 > gy1) gy1 = by1;
+        }
+        if (gx1 > gx0 && gy1 > gy0) {
+          float ex0 = gx0 - margin - 2.0f, ey0 = gy0 - margin - 2.0f;
+          float ex1 = gx1 + margin + 2.0f, ey1 = gy1 + margin + 2.0f;
+          if (ex0 < dep[0]) { dep[0] = ex0; grew = 1; }
+          if (ey0 < dep[1]) { dep[1] = ey0; grew = 1; }
+          if (ex1 > dep[2]) { dep[2] = ex1; grew = 1; }
+          if (ey1 > dep[3]) { dep[3] = ey1; grew = 1; }
+        }
+      } else {
+        float rad = bi[23] + 4.0f;
+        float ex0 = bi[21] - rad, ey0 = bi[22] - rad;
+        float ex1 = bi[21] + rad, ey1 = bi[22] + rad;
+        if (ex0 < dep[0]) { dep[0] = ex0; grew = 1; }
+        if (ey0 < dep[1]) { dep[1] = ey0; grew = 1; }
+        if (ex1 > dep[2]) { dep[2] = ex1; grew = 1; }
+        if (ey1 > dep[3]) { dep[3] = ey1; grew = 1; }
+      }
+    }
+    if (!grew) break;
   }
   size_t most = ((size_t)start + (size_t)(count - pieces)) * MB_INST;
   if (under_now_cap < most) {
@@ -2146,15 +2336,13 @@ static int under_take(const float *f, int32_t start, int32_t count, int32_t piec
     under_now = grown;
     under_now_cap = most;
   }
-  for (int32_t i = 0; i < whole; i++)
-    if (f[(size_t)i * MB_INST + 20] > (float)MB_STREAM_TEX) return 0;
   float *o = under_now;
-  memcpy(o, f, (size_t)whole * MB_INST * sizeof(float));
-  o += (size_t)whole * MB_INST;
-  int32_t picked = 0;
-  for (int32_t i = whole; i < start; i++) {
-    if (!reaches(f, i, i, g)) continue;
-    if (f[(size_t)i * MB_INST + 20] > (float)MB_STREAM_TEX) return 0;
+  int32_t picked = 0, run = 0;
+  for (int32_t i = 0; i < start; i++) {
+    float tid = f[(size_t)i * MB_INST + 20];
+    if (i > 0 && tid != f[(size_t)(i - 1) * MB_INST + 20]) run = i;
+    if (!reaches(f, i, run, dep)) continue;
+    if (tid > (float)MB_STREAM_TEX) return 0;
     memcpy(o, f + (size_t)i * MB_INST, MB_INST * sizeof(float));
     o += MB_INST;
     picked++;
@@ -2162,7 +2350,7 @@ static int under_take(const float *f, int32_t start, int32_t count, int32_t piec
   memcpy(o, f + (size_t)pieces * MB_INST, (size_t)(count - pieces) * MB_INST * sizeof(float));
   o += (size_t)(count - pieces) * MB_INST;
   under_now_n = (size_t)(o - under_now);
-  under_whole = whole;
+  under_whole = 0;
   under_picked = picked;
   return 1;
 }
@@ -2290,7 +2478,11 @@ static int blur_grab(ID3D11RenderTargetView *target, const Grab *m) {
     ctx->PSSetConstantBuffers(0, 1, &pbuf);
     ID3D11ShaderResourceView *srvs[4] = {lv[0].srv, lv[1].srv, lv[2].srv, lv[3].srv};
     ctx->PSSetShaderResources(0, 4, srvs);
+    ctx->RSSetState(raster_cut);
+    D3D11_RECT vsc = {m->vis_x, m->vis_y, m->vis_x + m->vis_w, m->vis_y + m->vis_h};
+    ctx->RSSetScissorRects(1, &vsc);
     ctx->Draw(3, 0);
+    ctx->RSSetState(raster);
     ctx->PSSetShaderResources(0, 4, none4);
   } else {
     if (m->contained) {
@@ -2475,7 +2667,7 @@ static void encode(ID3D11RenderTargetView *target, int pw, int ph, int32_t count
   if (part) cut = *part;
   else ctx->ClearRenderTargetView(target, clear);
   if (count <= 0 && !part) return;
-  struct { float vp[2]; float scale; float pad; } u = {{(float)vw, (float)vh}, (float)vscale, 0};
+  struct { float vp[2]; float scale; float pad; float origin[2]; float pad2[2]; } u = {{(float)vw, (float)vh}, (float)vscale, 0, {0, 0}, {0, 0}};
   ctx->UpdateSubresource(ubuf, 0, NULL, &u, 0, 0);
   memset(&gu, 0, sizeof gu);
   ad_fill_gu(rw);
@@ -2545,11 +2737,115 @@ static void encode(ID3D11RenderTargetView *target, int pw, int ph, int32_t count
     }
     // holes for native views (kind 9) apart, written without blending: transparent there
     int kind = (int)(f[start * MB_INST + 5] + 0.5f), hole = kind == 9, own = has_own_ps(kind);
+    if (kind == 8) {
+      int32_t child_n = (int32_t)(f[start * MB_INST + 12] + 0.5f);
+      if (child_n < 0) child_n = 0;
+      if (start + 1 + child_n > count) child_n = count - start - 1;
+      const float *hb = f + (size_t)start * MB_INST;
+      if (child_n <= 0 || hb[11] <= 0.001f || hb[2] <= 0.0f || hb[3] <= 0.0f) {
+        start += 1 + child_n;
+        continue;
+      }
+      glass_drawn = 1;
+      float sc_f = (float)vscale;
+      float blur_pt = fmaxf(hb[7], 0.0f);
+      float refr_pt = fmaxf(hb[14], 0.0f);
+      float margin = blur_pt * 3.0f + refr_pt + 4.0f;
+      float x0 = hb[0], y0 = hb[1], x1 = hb[0] + hb[2], y1 = hb[1] + hb[3];
+      for (int32_t ci = start + 1; ci < start + 1 + child_n; ci++) {
+        const float *cb_f = f + (size_t)ci * MB_INST;
+        int ck = (int)(cb_f[5] + 0.5f);
+        if (ck == 12 || cb_f[2] <= 0.0f || cb_f[3] <= 0.0f) continue;
+        if (cb_f[0] < x0) x0 = cb_f[0];
+        if (cb_f[1] < y0) y0 = cb_f[1];
+        if (cb_f[0] + cb_f[2] > x1) x1 = cb_f[0] + cb_f[2];
+        if (cb_f[1] + cb_f[3] > y1) y1 = cb_f[1] + cb_f[3];
+      }
+      float ox = floorf((x0 - margin) * sc_f) / sc_f;
+      float oy = floorf((y0 - margin) * sc_f) / sc_f;
+      int lpw = (int)ceilf(((x1 + margin) - ox) * sc_f);
+      int lph = (int)ceilf(((y1 + margin) - oy) * sc_f);
+      int max_w = pw > 2048 ? pw : 2048;
+      int max_h = ph > 2048 ? ph : 2048;
+      if (lpw < 1) lpw = 1;
+      if (lph < 1) lph = 1;
+      if (lpw > max_w) lpw = max_w;
+      if (lph > max_h) lph = max_h;
+      if (!ensure_lens_levels(lpw, lph)) {
+        start += 1 + child_n;
+        continue;
+      }
+      // Pass 1: render children into lens_lv[0]
+      ID3D11ShaderResourceView *none[3] = {NULL, NULL, NULL};
+      ctx->PSSetShaderResources(0, 3, none);
+      float zclear[4] = {0, 0, 0, 0};
+      ctx->OMSetRenderTargets(1, &lens_lv[0].rt, NULL);
+      ctx->ClearRenderTargetView(lens_lv[0].rt, zclear);
+      D3D11_VIEWPORT lvp = {0, 0, (float)lpw, (float)lph, 0, 1};
+      ctx->RSSetViewports(1, &lvp);
+      ctx->RSSetState(raster);
+      struct { float vp[2]; float scale; float pad; float origin[2]; float pad2[2]; } lu = {
+        {(float)lpw / sc_f, (float)lph / sc_f}, sc_f, 0, {ox, oy}, {0, 0}};
+      ctx->UpdateSubresource(ubuf, 0, NULL, &lu, 0, 0);
+      ctx->PSSetShaderResources(0, 1, &atlas_srv);
+      ctx->PSSetShaderResources(2, 1, &atlas_srv);
+      ctx->PSSetShaderResources(3, 1, &segs_srv);
+      int32_t cs = start + 1, cend_all = start + 1 + child_n;
+      while (cs < cend_all) {
+        int ctid = (int)f[cs * MB_INST + 20];
+        int ck = (int)(f[cs * MB_INST + 5] + 0.5f);
+        if (ck == 5 || ck == 6 || ck == 8 || ck == 9 || ck == 12 || ctid < 0) {
+          cs++;
+          continue;
+        }
+        int cown = has_own_ps(ck);
+        int32_t ce = cs + 1;
+        while (ce < cend_all && (int)f[ce * MB_INST + 20] == ctid) {
+          int kk = (int)(f[ce * MB_INST + 5] + 0.5f);
+          if (kk == 5 || kk == 6 || kk == 8 || kk == 9 || kk == 12) break;
+          if (cown ? kk != ck : has_own_ps(kk)) break;
+          ce++;
+        }
+        ID3D11ShaderResourceView *ct = ctid > MB_STREAM_TEX ? (ID3D11ShaderResourceView *)mb_stream_srv(ctid - MB_STREAM_TEX)
+                                      : ctid ? (ID3D11ShaderResourceView *)mb_image_srv(ctid) : atlas_srv;
+        if (ctid > MB_STREAM_TEX && !ct) { cs = ce; continue; }
+        if (ctid > 0 && ctid <= MB_STREAM_TEX && !ct) encode_missing = 1;
+        ctx->PSSetShaderResources(1, 1, ct ? &ct : &atlas_srv);
+        ctx->PSSetShader(cown ? kind_ps(ck) : ps, NULL, 0);
+        ctx->DrawInstanced(6, (UINT)(ce - cs), 0, (UINT)cs);
+        cs = ce;
+      }
+      // Pass 2: separable Gaussian blur in BGRA8
+      float sp = blur_pt * sc_f;
+      if (sp > 0.25f) {
+        ctx->OMSetBlendState(NULL, NULL, 0xffffffff);
+        ctx->IASetInputLayout(NULL);
+        ctx->VSSetShader(pvs, NULL, 0);
+        ctx->PSSetShader(pps, NULL, 0);
+        post_pass(&lens_lv[0], lpw, lph, &lens_lv[1], lpw, lph, 2, sp, 1.0f, 0.0f);
+        post_pass(&lens_lv[1], lpw, lph, &lens_lv[0], lpw, lph, 2, sp, 0.0f, 1.0f);
+      }
+      // Pass 3: composite refracted & SDF-clipped foreground lens onto target
+      ctx->UpdateSubresource(ubuf, 0, NULL, &u, 0, 0);
+      memset(&gu, 0, sizeof gu);
+      float W = (float)lens_lv[0].w, H = (float)lens_lv[0].h;
+      gu.map[0] = sc_f / W; gu.map[1] = sc_f / H;
+      gu.map[2] = -(ox * sc_f) / W; gu.map[3] = -(oy * sc_f) / H;
+      gu.uvc[0] = 0.5f / W; gu.uvc[1] = 0.5f / H;
+      gu.uvc[2] = ((float)lpw - 0.5f) / W; gu.uvc[3] = ((float)lph - 0.5f) / H;
+      gsrv = lens_lv[0].srv;
+      main_state(target, pw, ph);
+      ctx->PSSetShader(kind_ps(8), NULL, 0);
+      ctx->DrawInstanced(6, 1, 0, (UINT)start);
+      bound = 0;
+      start += 1 + child_n;
+      continue;
+    }
     // (kinds without their own pixel shader one run, as before)
     end = start + 1;
     while (end < count && (int)f[end * MB_INST + 20] == tid) {
       int k = (int)(f[end * MB_INST + 5] + 0.5f);
-      if ((k == 9) != hole || (own ? k != kind : has_own_ps(k))) break;
+      if (k == 8 || (k == 9) != hole || (own ? k != kind : has_own_ps(k))) break;
       end++;
     }
     // (a hole's image is its view's, src/hostapi/host.mbt view_tex_base + its id: the view is under the canvas here)
@@ -2578,6 +2874,143 @@ static void encode(ID3D11RenderTargetView *target, int pw, int ph, int32_t count
 #ifndef MB_WIN_CREATE_BUFFER
 #define MB_WIN_CREATE_BUFFER(d, desc, init, out) ((d)->CreateBuffer((desc), (init), (out)))
 #endif
+
+// Non-blocking D3D11 GPU timestamp disjoint query ring (4 slots): polls completed oldest slots with
+// D3D11_ASYNC_GETDATA_DONOTFLUSH (zero pipeline stall) and gracefully degrades to -1.0 if CreateQuery fails.
+#define MB_GPU_Q_SLOTS 4
+struct GpuQuerySlot {
+  ID3D11Query *disjoint;
+  ID3D11Query *ts_begin;
+  ID3D11Query *ts_end;
+  int in_flight;
+};
+static GpuQuerySlot gpu_q[MB_GPU_Q_SLOTS];
+static int gpu_q_head = 0;
+static int gpu_q_tail = 0;
+static int gpu_q_init_done = 0;
+static int gpu_q_ok = 0;
+static double last_gpu_ms = -1.0;
+static int32_t present_dropped = 0;
+
+static void gpu_q_free(void) {
+  for (int i = 0; i < MB_GPU_Q_SLOTS; i++) {
+    if (gpu_q[i].disjoint) {
+      gpu_q[i].disjoint->Release();
+      gpu_q[i].disjoint = NULL;
+    }
+    if (gpu_q[i].ts_begin) {
+      gpu_q[i].ts_begin->Release();
+      gpu_q[i].ts_begin = NULL;
+    }
+    if (gpu_q[i].ts_end) {
+      gpu_q[i].ts_end->Release();
+      gpu_q[i].ts_end = NULL;
+    }
+    gpu_q[i].in_flight = 0;
+  }
+  gpu_q_head = 0;
+  gpu_q_tail = 0;
+  gpu_q_init_done = 0;
+  gpu_q_ok = 0;
+}
+
+static int gpu_q_ensure(void) {
+  if (gpu_q_init_done) return gpu_q_ok;
+  gpu_q_init_done = 1;
+  gpu_q_ok = 0;
+  if (!dev || !ctx) return 0;
+  D3D11_QUERY_DESC dq = {};
+  dq.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+  D3D11_QUERY_DESC tq = {};
+  tq.Query = D3D11_QUERY_TIMESTAMP;
+  for (int i = 0; i < MB_GPU_Q_SLOTS; i++) {
+    if (FAILED(dev->CreateQuery(&dq, &gpu_q[i].disjoint)) || !gpu_q[i].disjoint ||
+        FAILED(dev->CreateQuery(&tq, &gpu_q[i].ts_begin)) || !gpu_q[i].ts_begin ||
+        FAILED(dev->CreateQuery(&tq, &gpu_q[i].ts_end)) || !gpu_q[i].ts_end) {
+      gpu_q_free();
+      gpu_q_init_done = 1;
+      gpu_q_ok = 0;
+      return 0;
+    }
+    gpu_q[i].in_flight = 0;
+  }
+  gpu_q_head = 0;
+  gpu_q_tail = 0;
+  gpu_q_ok = 1;
+  return 1;
+}
+
+static void gpu_q_poll(void) {
+  if (!ctx || !gpu_q_ok) return;
+  for (int n = 0; n < MB_GPU_Q_SLOTS; n++) {
+    GpuQuerySlot *s = &gpu_q[gpu_q_head];
+    if (!s->in_flight) break;
+    D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj = {};
+    UINT64 t0 = 0, t1 = 0;
+    HRESULT hr_d = ctx->GetData(s->disjoint, &dj, sizeof dj, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    if (hr_d == S_FALSE) break;
+    if (FAILED(hr_d)) {
+      s->in_flight = 0;
+      gpu_q_head = (gpu_q_head + 1) % MB_GPU_Q_SLOTS;
+      continue;
+    }
+    HRESULT hr_0 = ctx->GetData(s->ts_begin, &t0, sizeof t0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    if (hr_0 == S_FALSE) break;
+    HRESULT hr_1 = ctx->GetData(s->ts_end, &t1, sizeof t1, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    if (hr_1 == S_FALSE) break;
+    if (hr_0 == S_OK && hr_1 == S_OK && !dj.Disjoint && dj.Frequency > 0 && t1 >= t0) {
+      last_gpu_ms = (double)(t1 - t0) * 1000.0 / (double)dj.Frequency;
+    }
+    s->in_flight = 0;
+    gpu_q_head = (gpu_q_head + 1) % MB_GPU_Q_SLOTS;
+  }
+}
+
+static int gpu_q_begin(void) {
+  if (!gpu_q_ensure()) return -1;
+  gpu_q_poll();
+  int idx = gpu_q_tail;
+  if (gpu_q[idx].in_flight) return -1;
+  ctx->Begin(gpu_q[idx].disjoint);
+  ctx->End(gpu_q[idx].ts_begin);
+  return idx;
+}
+
+static void gpu_q_end(int idx) {
+  if (idx < 0 || idx >= MB_GPU_Q_SLOTS || !ctx || !gpu_q_ok) return;
+  ctx->End(gpu_q[idx].ts_end);
+  ctx->End(gpu_q[idx].disjoint);
+  gpu_q[idx].in_flight = 1;
+  gpu_q_tail = (idx + 1) % MB_GPU_Q_SLOTS;
+}
+
+#define MB_WIN_DROPPED_CLAMP 10
+// Pure logic for counting dropped frames from consecutive DXGI_FRAME_STATISTICS samples:
+// counts drops only when consecutive presents are within 2.5 * period_ms (continuous animation/scroll, not idle pauses).
+static int32_t win_count_dropped_step(UINT prev_present, UINT prev_sync, int64_t prev_qpc, int has_prev,
+                                      UINT cur_present, UINT cur_sync, int64_t cur_qpc,
+                                      int64_t qpc_freq, double period_ms) {
+  if (!has_prev || qpc_freq <= 0 || period_ms <= 0.0) return 0;
+  if (cur_qpc <= prev_qpc) return 0;
+  double dt_ms = (double)(cur_qpc - prev_qpc) * 1000.0 / (double)qpc_freq;
+  if (dt_ms >= 2.5 * period_ms) return 0;
+  if (cur_present <= prev_present || cur_sync <= prev_sync) return 0;
+  UINT d_present = cur_present - prev_present;
+  UINT d_sync = cur_sync - prev_sync;
+  if (d_sync <= d_present) return 0;
+  UINT dropped = d_sync - d_present;
+  if (dropped > MB_WIN_DROPPED_CLAMP) dropped = MB_WIN_DROPPED_CLAMP;
+  return (int32_t)dropped;
+}
+
+static double win_display_period_ms(int64_t qpc_freq) {
+  DWM_TIMING_INFO ti = {};
+  ti.cbSize = sizeof ti;
+  if (qpc_freq > 0 && SUCCEEDED(DwmGetCompositionTimingInfo(NULL, &ti)) && ti.qpcRefreshPeriod) {
+    return (double)ti.qpcRefreshPeriod * 1000.0 / (double)qpc_freq * (double)mb_frame_beats();
+  }
+  return 1000.0 / 60.0;
+}
 
 // Ensures `vbuf` can hold at least `room` bytes: doubles when possible, falls back to exact `room`, and always clears
 // `vbuf`/`vbuf_cap` on failure so callers never dereference a stale or NULL buffer.
@@ -2652,6 +3085,7 @@ static int submit(const double *inst, int32_t count, double r, double g, double 
   last_bg[1] = (float)g;
   last_bg[2] = (float)b;
   // a window's into its canvas; without one, the offscreen target is kept as a canvas is
+  int qslot = gpu_q_begin();
   ID3D11RenderTargetView *target = rtv;
   int *kept = &off_ok;
   if (chain) {
@@ -2659,6 +3093,7 @@ static int submit(const double *inst, int32_t count, double r, double g, double 
     if (!canvas_rtv) {
       dirty_told = dirty_whole = dirty_n = 0;
       encode(rtv, fb_w, fb_h, count, last_bg, last_inst);
+      gpu_q_end(qslot);
       if (parts_out) *parts_out = -1;
       return 1;
     }
@@ -2689,6 +3124,7 @@ static int submit(const double *inst, int32_t count, double r, double g, double 
     ctx->CopyResource(back, canvas);
     back->Release();
   }
+  gpu_q_end(qslot);
   return 1;
 }
 
@@ -2765,6 +3201,25 @@ int mb_render_present(const double *inst, int32_t count, double r, double g, dou
     hr = chain->Present(1, 0);
   }
   commit_presented();
+  if (SUCCEEDED(hr) && hr != DXGI_STATUS_OCCLUDED) {
+    DXGI_FRAME_STATISTICS fs = {};
+    if (SUCCEEDED(chain->GetFrameStatistics(&fs)) && fs.PresentCount > 0) {
+      LARGE_INTEGER now_qpc, freq_qpc;
+      QueryPerformanceCounter(&now_qpc);
+      QueryPerformanceFrequency(&freq_qpc);
+      double period_ms = win_display_period_ms(freq_qpc.QuadPart);
+      present_dropped += win_count_dropped_step(rw->last_present_count, rw->last_sync_refresh,
+                                                rw->last_present_qpc, rw->has_frame_stats,
+                                                fs.PresentCount, fs.SyncRefreshCount,
+                                                now_qpc.QuadPart, freq_qpc.QuadPart, period_ms);
+      rw->last_present_count = fs.PresentCount;
+      rw->last_sync_refresh = fs.SyncRefreshCount;
+      rw->last_present_qpc = now_qpc.QuadPart;
+      rw->has_frame_stats = 1;
+    }
+  } else {
+    rw->has_frame_stats = 0;
+  }
   pace_owed = hr != DXGI_STATUS_OCCLUDED ? 1 : pace_owed ? pace_owed : 2;
   return SUCCEEDED(hr);
 }
@@ -3161,7 +3616,10 @@ int mb_screen_snapshot(void *hwnd, const wchar_t *path) {
   return ok;
 }
 
-// The GPU's time is not measured here.
-extern "C" double mb_host_gpu_ms(void) { return -1; }
-// Each frame drawn as it is made, on the window's thread: none dropped.
-extern "C" int32_t mb_host_frames_dropped(void) { return 0; }
+// The GPU's time for the last completed D3D11 frame (non-blocking timestamp query ring), in ms (-1: none yet).
+extern "C" double mb_host_gpu_ms(void) {
+  gpu_q_poll();
+  return last_gpu_ms;
+}
+// Frames dropped during continuous presentation (DXGI_FRAME_STATISTICS sync-refresh vs present-count delta).
+extern "C" int32_t mb_host_frames_dropped(void) { return present_dropped; }

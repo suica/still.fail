@@ -132,13 +132,11 @@ test "rows together in a panel's body as nodes: a sheet opened by nothing and by
     #|dialog:
     #|rect 40,40 720x32 3907312895
     #|rect 0,0 800x600 320215859
-    #|rect 140,166.5 520x267 4294967295
     #|rect 156,289.5 488x128 606546701
     #|rect 582,314.5 36x22 2021161011
     #|rect 584,316.5 22.5x18 4294967295
     #|rect 582,370.5 36x22 3428463871
     #|rect 593.5,372.5 22.5x18 4294967295
-    #|rect 140,166.5 520x267 0
     #|words 打开@387,46 26x20 a1
     #|words 一组@164,192.5 44x30 a1
     #|words 它说的话@164,241.5 472x18 a1

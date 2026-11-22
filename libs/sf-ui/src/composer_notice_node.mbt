@@ -83,8 +83,8 @@ pub fn composer_notice_node(
     b
     .margin(By(fn() { (inset(), 0.0, inset(), notice_over) }))
     .radius(By(fn() { outer() / 2.0 }))
-    .glass(By(fn() { Some(glass_floating()) }))
     |> ignore
+    glass_capsule_node(b, sharing=false) |> ignore
     // its line: the mark, what it says, then what it offers, its ×, or its choice (wrapping under what it says where
     // the line has not the room for both)
     b.box(fn(line) {

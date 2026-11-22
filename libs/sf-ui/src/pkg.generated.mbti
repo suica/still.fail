@@ -52,6 +52,9 @@ pub let agent_station_most : @ui.Len
 
 pub fn alpha(Int64, Double) -> Int64
 
+#callsite(autofill(loc))
+pub fn anchored_popover_bridge(@view.View, @view.View, () -> @ui.Look, side? : @view.Side, along? : @view.Along, offset? : Double, loc~ : SourceLoc) -> Unit
+
 pub fn anchored_popover_shell(@view.View, @view.NodeId, () -> @ui.Look, side? : @view.Side, along? : @view.Along, offset? : Double, holds_side? : Bool, concentric_inset? : Double) -> @view.View
 
 pub fn apart(@ui.Ctx, () -> Unit) -> Unit
@@ -802,7 +805,7 @@ pub fn glass_knob() -> @paint.Glass
 #callsite(autofill(loc))
 pub fn glass_lift_surface(@view.View, () -> Double, flat_ground? : (() -> Int64)?, glass? : () -> @paint.Glass, radius? : Double, shadow? : () -> (Double, Double, Int64), loc~ : SourceLoc) -> Unit
 
-pub fn glass_menu() -> @paint.Glass
+pub fn glass_menu(merge? : Double) -> @paint.Glass
 
 pub fn glass_overlay_shadow() -> (Double, Double, Int64)
 
@@ -1776,6 +1779,12 @@ pub fn pointer_rests() -> Bool
 pub let pointer_size : Double
 
 pub let pointer_tip : Double
+
+pub fn popover_bridge_alpha(@ui.Look) -> Double
+
+pub fn popover_bridge_merge(@ui.Look) -> Double
+
+pub fn popover_bridge_scale(@ui.Look) -> Double
 
 pub fn popover_from(@ui.Ctx, String, Bool, Beside, side? : @view.Side, along? : @view.Along, look? : (@ui.Ctx, @kit.PopState, () -> Unit) -> Unit, () -> Unit) -> @ui.Changed[Bool]
 

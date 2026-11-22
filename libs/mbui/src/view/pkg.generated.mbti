@@ -682,6 +682,7 @@ pub(all) struct Look {
   mut radius : Double
   mut corners : (Double, Double, Double, Double)?
   mut glass : @paint.Glass?
+  mut content_lens : @paint.ContentLens
   mut alpha : Double
   mut dx : Double
   mut dy : Double
@@ -1241,6 +1242,7 @@ pub fn Tree::clear_of(Self, Double, Double, Double, Double) -> Unit
 pub fn Tree::clock_brought(Self) -> Double
 pub fn Tree::clock_read(Self) -> Bool
 pub fn Tree::composed(Self) -> Array[NodeId]
+pub fn Tree::content_lens_of(Self, NodeId) -> @paint.ContentLens
 pub fn Tree::cursor_of(Self, NodeId) -> Cursor
 pub fn Tree::cut_soft_of(Self, NodeId) -> (Double, Double, Double)?
 pub fn Tree::cycle_read(Self) -> Bool
@@ -1544,6 +1546,8 @@ pub fn View::concentric_radius(Self, () -> Double, extra_inset? : () -> Double, 
 pub fn View::container_corner(Self) -> ContainerCorner?
 pub fn View::corner_inset(Self, () -> Double) -> Self
 pub fn View::corner_scope(Self, () -> Double, inset? : () -> Double) -> Self
+#callsite(autofill(loc))
+pub fn View::content_lens(Self, Live[@paint.ContentLens], loc~ : SourceLoc) -> Self
 #callsite(autofill(loc))
 pub fn View::corners(Self, Live[(Double, Double, Double, Double)?], loc~ : SourceLoc) -> Self
 pub fn View::corners_drawn(Self) -> (Double, Double, Double, Double)

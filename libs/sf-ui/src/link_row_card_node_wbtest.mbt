@@ -113,9 +113,7 @@ test "rows that go somewhere, with a mark before their words and with none, on a
     #|dialog:
     #|rect 40,40 720x32 3907312895
     #|rect 0,0 800x600 320215859
-    #|rect 140,182.5 520x235 4294967295
     #|rect 156,305.5 488x96 606546701
-    #|rect 140,182.5 520x235 0
     #|words 打开@387,46 h20 a1
     #|words 一组@164,208.5 h30 a1
     #|words 上传图片@212,323.5 h20 a1
