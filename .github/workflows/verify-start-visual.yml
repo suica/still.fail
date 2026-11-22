@@ -1,0 +1,40 @@
+name: Render failed start states
+on:
+  push:
+    branches: [ci/start-failure-visual]
+permissions:
+  contents: read
+jobs:
+  render:
+    runs-on: macos-26
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+        with: { fetch-depth: 0, persist-credentials: false }
+      - uses: ./.github/actions/setup
+      - name: Install client dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: client/core-ts
+      - name: Install station dependencies imported by the client
+        run: pnpm install --frozen-lockfile --ignore-scripts
+        working-directory: station
+      - name: Make synthetic states with the real core
+        run: |
+          mkdir -p out
+          git show 5dd4241dbe87bc8d1642e44008795082d3210df0:client/core-ts/src/present.ts > client/core-ts/src/present-before.ts
+          node .github/ci-start-visual.mjs
+      - name: Render the same chat for each state
+        run: |
+          renderdir="$(node scripts/native.ts path mbui-film-wasm darwin-arm64)"
+          renderer="$renderdir/sffilm"
+          printf 'timeout 20000\nwait 1500\n' > out/still.drive
+          for mode in before after; do
+            MBUI_MEDIA_RUNTIME="$renderer" MBUI_FIXTURE=json MBUI_FIXTURE_JSON_FILE="$GITHUB_WORKSPACE/out/$mode.json" MBUI_WIN=1000x700 MBUI_FILM_SCALE=2 MBUI_LOCALE=zh bash apps/mbui/scripts/media.sh picture "$GITHUB_WORKSPACE/out/$mode.png" "$GITHUB_WORKSPACE/out/still.drive"
+          done
+          for mode in before after; do
+            MBUI_MEDIA_RUNTIME="$renderer" MBUI_FIXTURE=json MBUI_FIXTURE_JSON="$(cat "$GITHUB_WORKSPACE/out/$mode.json")" MBUI_WIN=1000x700 MBUI_FILM_SCALE=1 MBUI_LOCALE=zh bash apps/mbui/scripts/media.sh film "$GITHUB_WORKSPACE/out/$mode.mp4" "$GITHUB_WORKSPACE/out/still.drive"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        continue-on-error: true
+        with: { name: start-failure-visual, path: 'out/*', retention-days: 7 }
