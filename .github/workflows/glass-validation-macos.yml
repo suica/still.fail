@@ -18,6 +18,7 @@ jobs:
             -o /tmp/apple_render_test
           /tmp/apple_render_test
   windows:
+    if: ${{ contains(github.event.head_commit.message, 'Windows') }}
     runs-on: windows-2025
     timeout-minutes: 5
     defaults:
@@ -32,3 +33,23 @@ jobs:
           mkdir -p out/vbuf
           cl.exe -nologo -EHsc -W3 -WX -D_CRT_SECURE_NO_WARNINGS -Isrc/host scripts/win_vbuf_test.cpp -Foout/vbuf/ -Feout/vbuf/win_vbuf_test.exe -link d3d11.lib d3dcompiler.lib dcomp.lib dwmapi.lib gdi32.lib user32.lib windowscodecs.lib ole32.lib
           out/vbuf/win_vbuf_test.exe
+  mac-baseline:
+    if: ${{ contains(github.event.head_commit.message, 'baseline') }}
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm the new regression fails against the original renderer
+        run: |
+          mkdir -p /tmp/glass-before
+          cp .ci-scratch/apple_render_before.m /tmp/glass-before/apple_render.m
+          cc -Wall -fobjc-arc -I /tmp/glass-before -I libs/mbui/src/host -I .ci-scratch libs/mbui/scripts/apple_render_test.m \
+            -framework Foundation -framework QuartzCore -framework Metal -framework CoreGraphics -framework ImageIO \
+            -o /tmp/apple_render_before
+          if /tmp/apple_render_before > /tmp/before.log 2>&1; then
+            cat /tmp/before.log
+            echo "Expected the shared-capture regression to fail on the old renderer"
+            exit 1
+          fi
+          cat /tmp/before.log
+          grep -F 'apple_render_test.m:1190: failed: canvas_as_whole()' /tmp/before.log
