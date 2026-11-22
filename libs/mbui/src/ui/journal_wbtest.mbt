@@ -668,3 +668,50 @@ test "after_build callbacks are wrapped in work_part with sanitized key names" {
   assert_true(j.contains("\"part\":\"after tell\",\"ms\":12"), msg=j)
   assert_false(j.contains("secret-id-123"), msg=j)
 }
+
+///|
+test "display_hz is emitted in Hang and HangSummary JSON when host reports a positive rate, and omitted when 0" {
+  let (t, clock) = journal_start()
+  defer set_work_clock(None)
+  let hangs_said : Array[Hang] = []
+  let summaries : Array[HangSummary] = []
+  hangs_told(Some(fn(h) { hangs_said.push(h) }))
+  hang_summary_told(Some(fn(s) { summaries.push(s) }))
+  // default fake host returns 0.0: omitted from both JSON payloads
+  t.draw()
+  view_event_said(fn() {  }, fn() { clock.val += 60.0 }, what="touch-down")
+  clock.val += 1000.0
+  view_event_said(fn() {  }, fn() { journal_hidden.val = true }, what="app-state")
+  assert_eq(hangs_said.length(), 1)
+  assert_eq(summaries.length(), 1)
+  assert_false(hangs_said[0].json().stringify().contains("\"display_hz\""), msg=hangs_said[0].json().stringify())
+  assert_false(summaries[0].json().stringify().contains("\"display_hz\""), msg=summaries[0].json().stringify())
+  // host reports 119.88 Hz: rounded to 120 in both Hang and HangSummary JSON
+  t.fake.display_hz = 119.88
+  t.draw()
+  view_event_said(fn() {  }, fn() { clock.val += 60.0 }, what="touch-down")
+  clock.val += 1000.0
+  view_event_said(fn() {  }, fn() { journal_hidden.val = true }, what="app-state")
+  assert_eq(hangs_said.length(), 2)
+  assert_eq(summaries.length(), 2)
+  assert_true(hangs_said[1].json().stringify().contains("\"display_hz\":120"), msg=hangs_said[1].json().stringify())
+  assert_true(summaries[1].json().stringify().contains("\"display_hz\":120"), msg=summaries[1].json().stringify())
+}
+
+///|
+test "present contributor records present/host sub-part separately from frame notes" {
+  let t = Tester::new(fn(c) { c.text("present parts") |> ignore })
+  t.draw()
+  let told : Array[Hang] = []
+  hangs_told(Some(fn(h) { told.push(h) }))
+  t.fake.present_ms = 60.0
+  t.draw()
+  assert_eq(told.length(), 1)
+  let present_c = told[0].contributors.filter(fn(w) { w.what == Present })
+  assert_eq(present_c.length(), 1)
+  assert_eq(present_c[0].notes.length(), 1)
+  assert_eq(present_c[0].notes[0].0, "present/host")
+  assert_eq(journal_ms(present_c[0].notes[0].1), 60.0)
+  let j = told[0].json().stringify()
+  assert_true(j.contains("\"part\":\"present/host\",\"ms\":60"), msg=j)
+}

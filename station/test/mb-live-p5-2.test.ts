@@ -139,6 +139,16 @@ while IFS= read -r line; do
   to=$(printf '%s' "$line" | /usr/bin/sed -n 's/.*thread=\\\\"\\([^\\\\]*\\)\\\\".*/\\1/p')
   # (a prompt that names no thread, as a resume's: the one it was last asked in, as its conversation would know)
   if [ -n "$to" ]; then printf '%s' "$to" > "$FAKE_OUT/to"; else to=$(/bin/cat "$FAKE_OUT/to" 2>/dev/null); fi
+  # (asked to drop MCP mid-session: marks this process PID as broken and returns without calling /mcp on this turn and any subsequent nudge in the same process; once the station kills it and starts a new process with TOOLS_LOST, the new PID runs normally)
+  case "$line" in *NUDGE-UNHEARD-DROP*)
+    printf '%s' "$$" > "$FAKE_OUT/nudge-unheard-bad-pid"
+    say '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"num_turns":1,"session_id":"'"$sid"'","result":"lost mcp mid-session"}'
+    continue ;;
+  esac
+  if [ -f "$FAKE_OUT/nudge-unheard-bad-pid" ] && [ "$(/bin/cat "$FAKE_OUT/nudge-unheard-bad-pid")" = "$$" ]; then
+    say '{"type":"result","subtype":"success","is_error":false,"duration_ms":1,"num_turns":1,"session_id":"'"$sid"'","result":"still lost mcp on nudge"}'
+    continue
+  fi
   # (asked to simulate an agent that only sent initialize/notifications/ping and never called tools/list or tools/call:
   # the first process ends without posting so the MoonBit station's toolsUnheard self-heals and restarts it with TOOLS_LOST)
   case "$line" in *UNHEARD-ONCE*)
@@ -1110,6 +1120,49 @@ test("MoonBit station toolsUnheard: initialize/ping do not count as heard, and t
 
     b.tell({ op: "stop" });
     assert.equal(await b.ended, 0, b.err());
+  } finally {
+    store.close();
+  }
+});
+
+test("MoonBit station nudge-level toolsUnheard: mid-session MCP loss heals after nudge by restarting with TOOLS_LOST", { skip }, async () => {
+  const data = fresh("nu");
+  const app = fresh("a");
+  const bin = fresh("p");
+  const out = fresh("o");
+  writeFileSync(join(app, "BUILD"), "9400\n");
+  fakes(bin);
+  mkdirSync(join(data, "homes", "cc"), { recursive: true });
+  writeFileSync(join(data, "homes", "cc", ".credentials.json"), "{}");
+  writeFileSync(join(data, "config.json"), JSON.stringify({
+    profiles: [{ id: "cc", runtime: "claude", home: "homes/cc" }],
+    maxNudges: 2,
+  }));
+  mkdirSync(join(data, "mesh"), { recursive: true });
+  writeFileSync(join(data, "mesh", "cloud.json"), JSON.stringify({ origin: "https://app.example", workspace: "w1", workspace_name: "W", station: "st1" }));
+  const a = await launch(data, app, bin, out);
+  await a.next("ready", (m) => m.ready === true);
+  const door = await a.next("the agents' door", (m) => m.serving === "mcp");
+  const store = Store.open(join(data, "stillfail.db"), join(data, "archive"), { currentTimeMillisUnsafe: () => Date.now() } as never);
+  try {
+    session(store, data, "chat:c-from", "claude", "t0", "1790000000.000001");
+    session(store, data, "chat:c-nudge-unheard", "claude", "t1", "1790000000.000002");
+
+    // Turn 1: process calls tools/list and posts all_done (heard > 0, process stays warm).
+    const sent1 = await tool(door.port, "t0", "session_send", { to: "chat:c-nudge-unheard", text: "first normal turn" });
+    assert.equal(sent1.error, false, `${sent1.text}\n${a.err()}`);
+    await until("turn 1 all_done", () => store.listTurns("chat:c-nudge-unheard").filter((t) => t.summary.ending === "all_done").length >= 1, () => a.err());
+
+    // Turn 2: same process drops MCP (zero /mcp calls on turn 2 and on the following NUDGE) ->
+    // MoonBit station catches nudgeUnheard, kills the bad process, and restarts a new process with TOOLS_LOST which finishes all_done.
+    const sent2 = await tool(door.port, "t0", "session_send", { to: "chat:c-nudge-unheard", text: "NUDGE-UNHEARD-DROP please" });
+    assert.equal(sent2.error, false, `${sent2.text}\n${a.err()}`);
+    await until("mid-session MCP loss healed after nudge restart", () => store.listTurns("chat:c-nudge-unheard").filter((t) => t.summary.ending === "all_done").length >= 2, () => `${JSON.stringify(store.listTurns("chat:c-nudge-unheard").map((t) => t.summary))}\n${a.err()}`);
+    const prompts = readFileSync(join(out, "prompts"), "utf8");
+    assert.match(prompts, /Your last turn could not reach the station's tools/, prompts);
+
+    a.tell({ op: "stop" });
+    assert.equal(await a.ended, 0, a.err());
   } finally {
     store.close();
   }

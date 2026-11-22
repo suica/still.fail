@@ -204,3 +204,33 @@ test "float_pill_group_node: one capsule of glass_floating() liquid glass round 
   @ui.set_glass_solid(None)
   set_dark(None)
 }
+
+///|
+test "float_button_node and pick_bar_node press drives GPU spot highlight and settles cleanly" {
+  let spot_of = fn(raw : Double) -> Double { if raw < 0.0 { -raw - 1.0 } else { raw } }
+  for kind in ["pick_bar", "float_button"] {
+    for dark in [false, true] {
+      let t = float_control_tester(kind, dark, false)
+      let has_spot = fn() {
+        t.drawn_instances().iter().any(fn(a) { a.length() > 14 && a[5] == 6.0 && spot_of(a[14]) > 0.0 })
+      }
+      assert_eq(has_spot(), false, msg="\{kind} dark=\{dark}: rest must have no active GPU spot")
+      let target = if kind == "pick_bar" {
+        t.get(Button, label="引用")
+      } else {
+        t.get(Button, label="回到底部")
+      }
+      let (tx, ty, tw, th) = target.rect
+      let (cx, cy) = (tx + tw / 2.0, ty + th / 2.0)
+      t.press_at(cx, cy)
+      t.run_for(part_whole_ms)
+      assert_true(has_spot(), msg="\{kind} dark=\{dark}: press must drive active GPU spot")
+      t.release(cx, cy)
+      t.run_for(@ui.move_most_ms * 2.0)
+      assert_eq(has_spot(), false, msg="\{kind} dark=\{dark}: settled must clear GPU spot")
+      assert_eq(t.audit(), [])
+    }
+  }
+  @ui.set_glass_solid(None)
+  set_dark(None)
+}

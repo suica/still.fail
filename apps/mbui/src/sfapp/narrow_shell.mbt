@@ -891,26 +891,13 @@ fn narrow_bar_scrim_node(
   base_h : (@view.View) -> Double,
   fade_h : (@view.View) -> Double,
 ) -> Unit {
-  parent.box(fn(scrim) {
-    scrim
-    .over(Is(true))
-    .width_share(Is(1.0))
-    .height(By(fn() { Some(base_h(scrim)) }))
-    .fades(By(fn() { (0.0, 0.0, 0.0, fade_h(scrim)) }))
-    |> ignore
-    scrim.box(fn(fill) {
-      // (register fill in inputs_in via pointed() while keeping points=false so Tree::target_at visits fill and
-      // applies Node::covers to block click-through onto scrolled content behind the top bar without affecting hover)
-      fill
-      .width_share(Is(1.0))
-      .height_share(Is(1.0))
-      .glass(By(fn() { if base_h(fill) > 0.0 { Some(@sf.glass_scroll_edge()) } else { None } }))
-      .points(Is(false))
-      |> ignore
-      fill.pointed() |> ignore
-    })
-    |> ignore
-  })
+  @sf.top_scroll_edge_node(
+    parent,
+    base_h,
+    fade_h,
+    bg=fn() { @sf.theme().p.bg },
+    shield=true,
+  )
   |> ignore
 }
 

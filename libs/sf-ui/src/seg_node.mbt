@@ -261,7 +261,7 @@ fn seg_lens_overlay_node(
     .glass(By(fn() {
       let p = full()
       if p > 0.001 {
-        Some(glass_tab_lens(p))
+        Some(@lg.liquid_tab_lens_glass(p, solid=theme().p.raised))
       } else {
         None
       }
@@ -963,167 +963,54 @@ pub fn seg_icons_node(
 ) -> @view.View {
   let pad = segmented_bar_pad
   let high = icon_button_side - 2.0 * pad
-  let step = high + segmented_gap
   let at = fn() { ways().search_by(fn(w) { w.0 == chosen() }).unwrap_or(0) }
-  let init_n = @signals.untracked(ways).length()
-  let last_init = if init_n > 1 { (init_n - 1).to_double() } else { 0.0 }
-  let dd = @lg.DampedDrag::new(@signals.untracked(at).to_double(), lo=0.0, hi=last_init, held_scale=1.0 + seg_lens_grow)
-  let current = Ref(@signals.untracked(at))
-  let strip_origin_x = Ref(0.0)
-  @headless.radio_group(
-    made_for=loc,
+  let g = @lg.liquid_segmented_node(
     parent,
-    fn() { said },
-    fn() { ways().get(at()).map(fn(w) { w.0 }).unwrap_or("") },
-    choose,
-    in_node=true,
-    fn(g, rg) {
-      dd.attach(g)
-      g
-      .row(Is(true))
-      .padding(Is((pad, pad, pad, pad)))
-      .gap(Is(segmented_gap))
-      .radius(Is(high / 2.0 + pad))
-      .ground(By(fn() { alpha(theme().p.text, 0.06) }))
-      .shrink(Is(0.0))
-      |> ignore
-      let last_fn = fn() {
-        let n = ways().length()
-        if n > 1 { (n - 1).to_double() } else { 0.0 }
+    fn() { ways().map(fn(w) { w.2 }) },
+    at,
+    fn(i) {
+      match @signals.untracked(ways).get(i) {
+        Some((k, _, _)) => choose(k)
+        None => ()
       }
-      g.reacts(at_start=false, at, fn(k) {
-        if k != current.val {
-          current.val = k
-          dd.set_bounds(lo=0.0, hi=last_fn())
-          dd.slide_to(k.to_double())
-        }
-      })
-      let no_lens = fn() { g.glass_solid() || @ui.reduced_motion() }
-      let lens = fn() {
-        if no_lens() {
-          0.0
-        } else {
-          dd.pressed(g)
-        }
-      }
-      let thumb_x = fn(v : @view.View) { pad + dd.value(v) * step }
-      let stopped = fn() {
-        let last = last_fn()
-        dd.set_bounds(lo=0.0, hi=last)
-        let to = dclamp(dd.target().round(), 0.0, last)
-        let i = to.to_int()
-        current.val = i
-        if no_lens() {
-          dd.slide_to(to)
-        } else {
-          dd.animate_to(to)
-        }
-        match @signals.untracked(ways).get(i) {
-          Some((k, _, _)) => if k != @signals.untracked(chosen) { choose(k) }
-          None => ()
-        }
-      }
-      let on_drag = fn(d : @view.Drag) {
-        let last = last_fn()
-        dd.set_bounds(lo=0.0, hi=last)
-        match d.kind {
-          Down | Moved => {
-            let lx = d.wx - strip_origin_x.val
-            let p = dclamp((lx - high / 2.0) / step, 0.0, last)
-            if no_lens() {
-              dd.slide_to(p)
-            } else {
-              dd.update_value(p)
-            }
-          }
-          Up => stopped()
-          Off => {
-            let orig = @signals.untracked(at)
-            current.val = orig
-            if no_lens() {
-              dd.slide_to(orig.to_double())
-            } else {
-              dd.cancel_to(orig.to_double())
-            }
-          }
-        }
-      }
-      // the thumb, drawn in paint layer via ground_drawn (zero relayout)
-      g.box(fn(th) {
-        th
-        .over(Is(true))
-        .points(Is(false))
-        .offset(Is((0.0, 0.0)))
-        .width(Is(Some(0.0)))
-        .height(Is(Some(high)))
-        .radius(Is(high / 2.0))
-        .ground(By(fn() { @ui.tree_theme().lifted }))
-        .edge(By(fn() { (0.5, theme().p.line) }))
-        .shadow(By(fn() { (1.0, 0.0, theme().p.shadow) }))
-        .alpha(By(fn() { seg_thumb_alpha(lens()) }))
-        .ground_drawn(By(fn() { { dx: thumb_x(th), dy: pad, dw: high, dh: 0.0, corners: None } }))
-        |> ignore
-      })
-      |> ignore
-      g.each(
-        fn() { ways().mapi(fn(i, w) { (i, w) }) },
-        fn(p) { p.1.0 },
-        fn(slot, item_sig) {
-          let key = item_sig.untracked().1.0
-          let idx_fn = fn() { item_sig.get().0 }
-          let o = rg.item(slot, fn() { key }, fn() { item_sig.get().1.2 }, fn(o, item) {
-            o.width(Is(Some(high))).height(Is(Some(high))).lines_up(Is(Some(Middle))).lies_along(Is(Middle)) |> ignore
-            icon_node(
-              o,
-              "",
-              16.0,
-              By(fn() {
-                let lit = dclamp(1.0 - (dd.value(o) - idx_fn().to_double()).abs(), 0.0, 1.0)
-                if item.hovered() && lit < 0.5 {
-                  theme().p.text
-                } else {
-                  @ui.blend(theme().p.muted, theme().p.text, lit)
-                }
-              }),
-              name_now=fn() { item_sig.get().1.1 },
-            )
-            |> ignore
-            o.gesture(
-              @ui.touch_slop(),
-              press=fn(d) {
-                let idx = @signals.untracked(idx_fn)
-                let idx_f = idx.to_double()
-                dd.set_bounds(lo=0.0, hi=last_fn())
-                strip_origin_x.val = d.wx - (idx_f * step + d.x)
-                if !no_lens() {
-                  dd.press()
-                }
-                if (idx_f - dd.target()).abs() > 0.001 {
-                  if no_lens() {
-                    dd.slide_to(idx_f)
-                  } else {
-                    dd.update_value(idx_f)
-                  }
-                }
-              },
-              tap=fn(_) { stopped() },
-              drag=on_drag,
-            )
-            |> ignore
-          })
-          match tips {
-            Some(layer) => tip_node(layer, o, fn() { item_sig.get().1.2 }) |> ignore
-            None => ()
-          }
-        },
-      )
-      seg_lens_overlay_node(
-        g,
-        lens,
-        fn() { high },
-        fn() { Some((thumb_x(g), pad, high, high)) },
-        jelly=fn(l) { dd.jelly(l, 10.0) },
-      )
     },
+    glass_track=false,
+    pad~,
+    gap=segmented_gap,
+    widths=fn() { Array::make(ways().length(), high) },
+    height_by=fn() { icon_button_side },
+    kind=Radio,
+    said~,
+    in_node=true,
+    render_item=fn(seg, idx, is_chosen) {
+      icon_node(
+        seg,
+        "",
+        16.0,
+        By(fn() {
+          if is_chosen() || seg.pointed() {
+            theme().p.text
+          } else {
+            theme().p.muted
+          }
+        }),
+        name_now=fn() { ways().get(idx).map(fn(w) { w.1 }).unwrap_or("") },
+      )
+      |> ignore
+      match tips {
+        Some(layer) =>
+          tip_node(layer, seg, fn() { ways().get(idx).map(fn(w) { w.2 }).unwrap_or("") }) |> ignore
+        None => ()
+      }
+    },
+    loc~,
   )
+  g
+  .width(By(fn() {
+    let n = ways().length()
+    Some(2.0 * pad + n.to_double() * high + dmax(0.0, (n - 1).to_double()) * segmented_gap)
+  }))
+  .shrink(Is(0.0))
+  |> ignore
+  g
 }

@@ -45,8 +45,17 @@ priv struct Mirror {
   mut notices : Int32
   mut waiting : Bool
   mut refill : Bool
+  mut tools_retry : Bool
   mut unread : Array[Json]
   mut identity : Json
+}
+
+///|
+priv struct AgentSlot {
+  generation : Int32
+  session : Agent
+  heard : Int?
+  mut nudge_heard : Int?
 }
 
 ///|
@@ -57,7 +66,7 @@ priv struct MbActor {
   mirror : Mirror
   mut sent : Int32
   mut next : Int32
-  agents : Map[Int32, (Int32, Agent, Int?)]
+  agents : Map[Int32, AgentSlot]
   mut generation : Int32
   mut closed : Bool
   told : Map[Int32, () -> Unit]
@@ -456,6 +465,7 @@ fn ActorsProgram::actor(
       notices: 0,
       waiting: false,
       refill: false,
+      tools_retry: false,
       unread: [],
       identity: Json::null(),
     },
@@ -545,6 +555,7 @@ fn MbActor::mirrored(self : MbActor, state : Json) -> Unit {
   m.notices = jnum_of(state, "notices").unwrap_or(0.0).to_int()
   m.waiting = jfield(state, "waiting") is True
   m.refill = jfield(state, "refill") is True
+  m.tools_retry = jfield(state, "toolsRetry") is True
   m.unread = if m.seen < self.read_at {
     []
   } else {
@@ -557,7 +568,7 @@ fn MbActor::mirrored(self : MbActor, state : Json) -> Unit {
 ///|
 fn MbActor::session(self : MbActor) -> Agent? {
   match self.mirror.agent {
-    Some(h) => self.agents.get(h).map(x => x.1)
+    Some(h) => self.agents.get(h).map(x => x.session)
     None => None
   }
 }
@@ -597,6 +608,7 @@ fn MbActor::holds_state(self : MbActor) -> Bool {
   self.mirror.notices > 0 ||
   self.mirror.waiting ||
   self.mirror.refill ||
+  self.mirror.tools_retry ||
   self.mirror.warm ||
   self.mirror.deferred_end
 }
@@ -864,10 +876,15 @@ async fn MbActor::hub_asked(
         Some(h) => self.agents.get(h.to_int())
         None => None
       }
-      let held = entry.map(x => x.1)
+      let held = entry.map(x => x.session)
       let tools_unheard = match entry {
-        Some((_, _, Some(heard))) if self.runtime != "codex" =>
+        Some({ heard: Some(heard), .. }) if self.runtime != "codex" =>
           self.program.ctx.mcp_heard_of(self.key) == heard
+        _ => false
+      }
+      let nudge_unheard = match entry {
+        Some({ nudge_heard: Some(nudge_heard), .. }) =>
+          self.program.ctx.mcp_heard_of(self.key) == nudge_heard
         _ => false
       }
       self.closing()
@@ -885,6 +902,9 @@ async fn MbActor::hub_asked(
           c["agent"] = agent
           if tools_unheard {
             c["toolsUnheard"] = jb(true)
+          }
+          if nudge_unheard {
+            c["nudgeUnheard"] = jb(true)
           }
           Json::object(c)
         }
@@ -904,7 +924,7 @@ async fn MbActor::hub_asked(
       let left = self.agents.values().to_array()
       self.agents.clear()
       for x in left {
-        (x.1.dispose)() catch {
+        (x.session.dispose)() catch {
           _ => ()
         }
       }
@@ -936,9 +956,14 @@ async fn MbActor::adopt(
       } else {
         None
       }
+      let nudge_heard = if jfield(snap, "nudgeUnheard") is True {
+        Some(self.program.ctx.mcp_heard_of(self.key))
+      } else {
+        None
+      }
       self.next += 1
       let handle = self.next
-      self.agents[handle] = (self.generation, g, heard)
+      self.agents[handle] = { generation: self.generation, session: g, heard, nudge_heard }
       taken = { "handle": ji(handle), "generation": ji(self.generation) }
       self.mirror.agent = Some(handle)
       self.mirror.turn = jtext(jfield(snap, "turn"), "id")
@@ -1002,7 +1027,7 @@ fn MbActor::told_(self : MbActor, f : String, args : Array[Json]) -> Unit {
       let tasks = match as_num(a(0)) {
         Some(h) =>
           match self.agents.get(h.to_int()) {
-            Some((_, s, _)) => (s.background)()
+            Some(slot) => (slot.session.background)()
             None => Json::array([])
           }
         None => Json::array([])
@@ -1049,9 +1074,10 @@ async fn MbActor::asked(self : MbActor, f : String, args : Array[Json]) -> Json 
     let handle = as_num(a(0))
       .unwrap_or(-1.0)
       .to_int()
-    guard self.agents.get(handle) is Some((_, s, _)) else {
+    guard self.agents.get(handle) is Some(slot) else {
       raise LiveError("no runtime session \{handle}")
     }
+    let s = slot.session
     let rest = args[1:].to_owned()
     let r = (i : Int32) => rest.get(i).unwrap_or(Json::null())
     return match name {
@@ -1247,7 +1273,7 @@ async fn MbActor::asked(self : MbActor, f : String, args : Array[Json]) -> Json 
       }
       self.next += 1
       let handle = self.next
-      self.agents[handle] = (gen.val, opened.0, Some(heard))
+      self.agents[handle] = { generation: gen.val, session: opened.0, heard: Some(heard), nudge_heard: None }
       self.route(opened.0, gen.val)
       match opened.1 {
         Object(m) => {
@@ -1264,10 +1290,10 @@ async fn MbActor::asked(self : MbActor, f : String, args : Array[Json]) -> Json 
         .unwrap_or(-1.0)
         .to_int()
       match self.agents.get(handle) {
-        Some((_, s, _)) =>
+        Some(slot) =>
           ctx.retune_agent(
             self.key,
-            s,
+            slot.session,
             self.runtime,
             as_text(a(1)),
             a(2) is True,
@@ -1279,14 +1305,27 @@ async fn MbActor::asked(self : MbActor, f : String, args : Array[Json]) -> Json 
     "profileId" => jfield(ctx.run_on(self.key, a(0) is True, true, force_cap=a(1) is True), "id")
     "toolsUnheard" => {
       let handle = as_num(a(0)).unwrap_or(-1.0).to_int()
+      let nudged = a(1) is True
       match self.agents.get(handle) {
-        Some((_, _, Some(heard))) if self.runtime != "codex" =>
-          if ctx.mcp_heard_of(self.key) == heard {
-            jstr("its process never reached the station's tools")
-          } else {
-            Json::null()
+        Some(slot) => {
+          let cur = ctx.mcp_heard_of(self.key)
+          match slot.heard {
+            Some(heard) if self.runtime != "codex" && cur == heard =>
+              jstr("its process never reached the station's tools")
+            _ =>
+              match slot.nudge_heard {
+                Some(nh) if nudged && cur == nh => {
+                  slot.nudge_heard = None
+                  jstr("its process made no tool requests even after being nudged")
+                }
+                _ => {
+                  slot.nudge_heard = Some(cur)
+                  Json::null()
+                }
+              }
           }
-        _ => Json::null()
+        }
+        None => Json::null()
       }
     }
     "outlived" =>
@@ -1294,7 +1333,7 @@ async fn MbActor::asked(self : MbActor, f : String, args : Array[Json]) -> Json 
         self.agents.get(
           as_num(a(0)).unwrap_or(-1.0).to_int(),
         ) {
-        Some((_, s, _)) => jb((s.outlived)())
+        Some(slot) => jb((slot.session.outlived)())
         None => jb(false)
       }
     "notice" => {
@@ -1395,7 +1434,7 @@ async fn MbActor::asked(self : MbActor, f : String, args : Array[Json]) -> Json 
       let version = match as_num(a(0)) {
         Some(h) =>
           match self.agents.get(h.to_int()) {
-            Some((_, s, _)) => (s.runtime_version)()
+            Some(slot) => (slot.session.runtime_version)()
             None => None
           }
         None => None

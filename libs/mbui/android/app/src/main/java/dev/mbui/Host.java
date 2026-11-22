@@ -299,6 +299,14 @@ final class Host {
         return v != null && v.framesPaced(hz);
     }
 
+    /** The display's refresh rate in Hz (@hostapi.display_hz; 0: unknown). */
+    static double displayHz() {
+        MBView v = view;
+        if (v == null) return 0.0;
+        double periodMs = v.framePeriodMs();
+        return periodMs > 0.0 ? 1000.0 / periodMs : 0.0;
+    }
+
     /** The input method's edits sent to MoonBit (MBView.MBInput.edited, main thread) and taken by it (its thread). */
     static int imeSent;
     static volatile int imeTaken;

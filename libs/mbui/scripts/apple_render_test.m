@@ -1380,6 +1380,62 @@ int main(void) {
       glass_free();
     }
 
+    // Perf-29: Stacked glass cache independence (top progressive blur + top liquid glass capsule + changing bottom
+    // content must produce 0 blur rebuilds and match a whole redraw to the byte; changing content under top
+    // progressive blur rebuilds both and matches a whole redraw).
+    {
+      double sg[5 * MB_INST];
+      rect_at(sg, 0, 0, 400, 300, 0, 0.94, 0.94, 0.92, 0);
+      rect_at(sg + 1 * MB_INST, 20, 8, 120, 24, 0, 0.85, 0.20, 0.20, 0);
+      rect_at(sg + 2 * MB_INST, 20, 220, 200, 32, 0, 0.20, 0.45, 0.90, 0);
+      rect_at(sg + 3 * MB_INST, 0, 0, 400, 64, 5, 0.96, 0.96, 0.96, -30);
+      sg[3 * MB_INST + 6] = 1.1;
+      sg[3 * MB_INST + 7] = 6.0;
+      sg[3 * MB_INST + 11] = 0.35;
+      sg[3 * MB_INST + 15] = 1.0;
+      sg[3 * MB_INST + 22] = -1.0;
+      sg[3 * MB_INST + 54] = 64.0;
+      sg[3 * MB_INST + 55] = 24.0;
+      rect_at(sg + 4 * MB_INST, 24, 12, 140, 32, 6, 0.99, 0.99, 0.99, -31);
+      sg[4 * MB_INST + 4] = 16.0;
+      sg[4 * MB_INST + 6] = 1.0;
+      sg[4 * MB_INST + 7] = 2.0;
+      sg[4 * MB_INST + 11] = 0x67 / 255.0;
+      sg[4 * MB_INST + 13] = 8.0;
+      sg[4 * MB_INST + 14] = -1.0;
+      sg[4 * MB_INST + 15] = 1.0;
+      sg[4 * MB_INST + 21] = 6.0;
+
+      mb_render_set_fixed_dt(1.0 / 60.0);
+      glass_forget();
+      int b0 = blurs_made;
+      mb_host_render_dirty(0, 0, 400, 300);
+      mb_render_present(sg, 5, 0.94, 0.94, 0.92);
+      present_drain();
+      CHECK(blurs_made == b0 + 2);
+      CHECK(canvas_as_whole());
+
+      for (int step = 0; step < 3; step++) {
+        sg[2 * MB_INST + 8] = 0.20 + 0.25 * (step + 1);
+        b0 = blurs_made;
+        mb_host_render_dirty(0, 0, 400, 300);
+        mb_render_present(sg, 5, 0.94, 0.94, 0.92);
+        present_drain();
+        CHECK(blurs_made == b0);
+        CHECK(canvas_as_whole());
+      }
+
+      sg[1 * MB_INST + 9] = 0.80;
+      b0 = blurs_made;
+      mb_host_render_dirty(0, 0, 400, 300);
+      mb_render_present(sg, 5, 0.94, 0.94, 0.92);
+      present_drain();
+      CHECK(blurs_made == b0 + 2);
+      CHECK(canvas_as_whole());
+      mb_render_set_fixed_dt(0.0);
+      glass_forget();
+    }
+
     // A group kept by the host (groups.h) drawn out by a header, straight into the floats: each instance moved in
     // doubles, then made a float, as the app's own instance moved there would be.
     double kept[MB_INST];

@@ -26,24 +26,8 @@ pub fn glass_foot() -> @ui.Glass {
 /// its top left: float_pill_group_node's).
 pub fn glass_floating(tint? : Int64, spot? : (Double, Double)? = None) -> @ui.Glass {
   let t = theme()
-  let glass_tint = match tint {
-    Some(c) => c
-    None => if t.dark { 0x20202067L } else { 0xFDFCFD67L }
-  }
   let solid = over(t.p.bg, alpha(tint.unwrap_or(t.p.raised), 0.72))
-  @ui.Glass::liquid(
-    blur=2.1,
-    tint=glass_tint,
-    solid~,
-    saturation=1.0,
-    rim=0.6,
-    bezel=20.0,
-    refraction=28.0,
-    chroma=0.0,
-    merge=0.0,
-    adaptive=true,
-    spot~,
-  )
+  @lg.liquid_floating_glass(tint~, solid~, spot~)
 }
 
 ///|
@@ -89,39 +73,14 @@ pub fn glass_toast() -> @ui.Glass {
 /// turning circular discs into colored stickers while keeping crisp 9/12 bezel refraction, specular rim, and legible
 /// `<` / `>` chevrons in both Light and Dark themes.
 pub fn glass_viewer_clear(spot? : (Double, Double)? = None) -> @ui.Glass {
-  let t = theme()
-  @ui.Glass::liquid(
-    blur=4.0,
-    tint=if t.dark { 0x20202067L } else { 0xFDFCFD67L },
-    solid=t.p.canvas,
-    saturation=0.55,
-    rim=0.70,
-    bezel=9.0,
-    refraction=12.0,
-    chroma=0.06,
-    merge=0.0,
-    adaptive=false,
-    spot~,
-  )
+  @lg.liquid_viewer_clear_glass(spot~, solid=theme().p.canvas)
 }
 
 ///|
 /// Dark translucent liquid glass for floating white-ink media viewer capsules (`dark_glass` / `viewer_marks_node`):
 /// neutral dark iOS 27 glass with controlled saturation (`0.65`) and 9/12 liquid bevel refraction.
 pub fn glass_viewer_dark(spot? : (Double, Double)? = None) -> @ui.Glass {
-  @ui.Glass::liquid(
-    blur=4.0,
-    tint=0x20202067L,
-    solid=0x161618FFL,
-    saturation=0.65,
-    rim=0.65,
-    bezel=9.0,
-    refraction=12.0,
-    chroma=0.06,
-    merge=0.0,
-    adaptive=false,
-    spot~,
-  )
+  @lg.liquid_viewer_dark_glass(spot~)
 }
 
 ///|
@@ -130,23 +89,7 @@ pub fn glass_viewer_dark(spot? : (Double, Double)? = None) -> @ui.Glass {
 /// adaptive color transfer, inner bevel shadow, glint, and 0.75pt external contour); where glass is drawn solid,
 /// its opaque ground.
 pub fn glass_tab_bar(spot? : (Double, Double)? = None, merge? : Double = 0.0) -> @ui.Glass {
-  let t = theme()
-  // Neutral light/dark sentinel selects Apple iOS 27 ios27Light / ios27Dark color transfer model in kind == 6.
-  let tint = if t.dark { 0x20202067L } else { 0xFDFCFD67L }
-  let solid = if t.dark { 0x1E1F24FFL } else { 0xFAFAFAFFL }
-  @ui.Glass::liquid(
-    blur=2.1,
-    tint~,
-    solid~,
-    saturation=1.0,
-    rim=0.6,
-    bezel=20.0,
-    refraction=28.0,
-    chroma=0.0,
-    merge~,
-    adaptive=false,
-    spot~,
-  )
+  @lg.liquid_tab_bar_glass(spot~, merge~)
 }
 
 ///|
@@ -196,56 +139,7 @@ pub fn glass_knob() -> @ui.Glass {
 ///|
 /// Clear lifted liquid glass lens while a tab bar / segmented control thumb is held (iOS 27 clear loupe).
 pub fn glass_tab_lens(press : Double) -> @ui.Glass {
-  let p = dclamp(press, 0.0, 1.0)
-  @ui.Glass::liquid(
-    blur=0.0,
-    tint=0xFFFFFF00L,
-    solid=theme().p.raised,
-    saturation=1.0,
-    rim=0.6 * p,
-    bezel=6.0 * p,
-    refraction=5.5 * p,
-    chroma=-0.02 * p,
-    merge=0.0,
-    adaptive=false,
-    zoom=1.0 + 0.08 * p,
-  )
-}
-
-///|
-/// Clear lifted liquid glass thumb while a toggle is held.
-fn glass_toggle_lens(press : Double) -> @ui.Glass {
-  let p = dclamp(press, 0.0, 1.0)
-  @ui.Glass::liquid(
-    blur=0.0,
-    tint=0xFFFFFF00L,
-    solid=0xFFFFFFFFL,
-    saturation=1.0,
-    rim=0.6 * p,
-    bezel=8.0 * p,
-    refraction=12.0 * p,
-    chroma=-0.06 * p,
-    merge=0.0,
-    adaptive=false,
-  )
-}
-
-///|
-/// Clear lifted liquid glass thumb while a slider is held.
-fn glass_slider_lens(press : Double) -> @ui.Glass {
-  let p = dclamp(press, 0.0, 1.0)
-  @ui.Glass::liquid(
-    blur=0.0,
-    tint=0xFFFFFF00L,
-    solid=theme().p.raised,
-    saturation=1.0,
-    rim=0.6 * p,
-    bezel=10.0 * p,
-    refraction=14.0 * p,
-    chroma=-0.06 * p,
-    merge=0.0,
-    adaptive=false,
-  )
+  @lg.liquid_tab_lens_glass(press, solid=theme().p.raised)
 }
 
 ///|

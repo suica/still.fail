@@ -515,6 +515,11 @@ fn thread_cpu_ms() -> Double {
 }
 
 ///|
+fn display_hz() -> Double {
+  0.0
+}
+
+///|
 /// A browser's page keeps no performance record (@hostapi.perf_state).
 fn perf_state() -> Int {
   -1

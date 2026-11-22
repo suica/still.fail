@@ -127,7 +127,7 @@ fn search_field_drawn(t : @ui.Tester, editor : Bool) -> (Double, Double)? {
     let (n, holder, _, words, size) = d
     if n.alpha > 0.0 && (words == "搜索全部内容" || words == "搜索") {
       let mut h = holder
-      while h >= 0 && drawn[h].0.ground == 0L {
+      while h >= 0 && drawn[h].0.ground == 0L && drawn[h].0.radius == 0.0 {
         h = drawn[h].1
       }
       if h >= 0 {
@@ -339,7 +339,7 @@ test "⌘K's scrolling results reach its curved foot and fade towards it" {
     // The viewport reaches the panel's edge; the panel itself cuts its contents to its outline.
     assert_true((foot - (py + ph)).abs() < 0.5, msg="\{width}: list ends at \{foot}, panel at \{py + ph}")
     assert_true(corner_cover(row, list.x + list.w / 2.0, foot - 2.0, 2.0) > 0.9, msg="\{width}: middle")
-    let panels = t.boxes_held().filter(fn(b) { (b.x - px).abs() < 0.5 && (b.y - py).abs() < 0.5 && (b.w - pw).abs() < 0.5 && b.border_w > 0.0 })
+    let panels = t.boxes_held().filter(fn(b) { (b.x - px).abs() < 0.5 && (b.y - py).abs() < 0.5 && (b.w - pw).abs() < 0.5 && (b.border_w > 0.0 || b.radius > 0.0) })
     assert_eq(panels.length(), 1, msg="\{width}: panel")
     let inset = list.x - px
     // (cut at the panel's own edge: its line takes no room and is drawn over what it holds)

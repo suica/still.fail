@@ -31,15 +31,77 @@ pub fn float_button_node(
     .padding(Is((room, room, room, room)))
     .min_width(Is(Some(float_button_side + 2.0 * room)))
     |> ignore
-    @headless.button(made_for=loc, o, label, fn(_) { press() }, disabled=busy.unwrap_or(fn() { false }), fn(b, _) {
+    @headless.button(made_for=loc, o, label, fn(_) { press() }, disabled=busy.unwrap_or(fn() { false }), fn(b, btn) {
+      let ih = @lg.InteractiveHighlight::new()
+      ih.attach(b)
+      let scale_bound = Ref(false)
+      let ensure_scale = fn() {
+        if !scale_bound.val {
+          scale_bound.val = true
+          b.scale(
+            By(fn() {
+              if @ui.reduced_motion() {
+                1.0
+              } else {
+                let (_, _, sx, sy) = ih.stretch(b)
+                (sx + sy) / 2.0
+              }
+            }),
+            about=At(0.5, 0.5),
+          )
+          |> ignore
+        }
+      }
       style_node(b, fn() { float_button_look })
       hover_ground_node(b)
       b
-      .glass(By(fn() { Some(glass_floating().sharing()) }))
+      .glass(By(fn() {
+        let sp = if !b.glass_solid() && ih.pressed(b) > 0.001 {
+          let (_, _, bw, bh) = b.placed_window_now()
+          if bw > 0.0 && bh > 0.0 {
+            Some(ih.spot(b, bw, bh))
+          } else {
+            None
+          }
+        } else {
+          None
+        }
+        Some(glass_floating(spot=sp).sharing())
+      }))
       .edge(By(fn() { if b.glass_solid() { (control_edge_w, theme().p.line) } else { (0.0, 0L) } }))
       .shadow(By(fn() { glass_control_shadow() }))
       .shadow_outside(Is(true))
       .clips(Is(true))
+      .gesture(
+        @ui.touch_slop(),
+        press=fn(d) {
+          if !btn.disabled() {
+            ensure_scale()
+            ih.down(d.x, d.y, d.w, d.h)
+          }
+        },
+        tap=fn(d) {
+          ih.up()
+          if !btn.disabled() && b.finger_target(d.wx, d.wy) {
+            btn.press()
+          }
+        },
+        drag=fn(d) {
+          match d.kind {
+            Down | Moved =>
+              if !btn.disabled() {
+                ih.moved(d.x, d.y)
+              }
+            Up => {
+              ih.up()
+              if !btn.disabled() && @ui.pointing() is Mouse && b.finger_target(d.wx, d.wy) {
+                btn.press()
+              }
+            }
+            Off => ih.up()
+          }
+        },
+      )
       .ring(
         By(fn() {
           if b.focus_shown() {

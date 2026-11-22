@@ -783,10 +783,7 @@ fn service_stage_node(
           @sf.style_node(r, fn() { service_restart_room })
           r.box(fn(pill) {
             @sf.style_node(pill, fn() { service_restart_pill })
-            pill.shadow(By(fn() { @sf.glass_control_shadow() }))
-            .shadow_outside(Is(true))
-            |> ignore
-            pill.glass(By(fn() { Some(@sf.glass_floating()) })) |> ignore
+            @sf.glass_capsule_node(pill) |> ignore
             @sf.first_line_node(pill, Ui, fn(l) {
               l.box(fn(d) { @sf.style_node(d, fn() { service_restart_dot }, in_row=true) }) |> ignore
             })

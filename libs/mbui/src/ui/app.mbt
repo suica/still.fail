@@ -300,16 +300,17 @@ fn on_frame(w : Double, h : Double, scale : Double, t : Double) -> Unit {
   }
   let t3 = work_now()
   let c3 = work_thread_cpu()
-  h_present(c.inst, c.ninst)
+  let frame_notes = journal_take_notes()
+  @hostapi.work_part(fn() { "present/host" }, fn() { h_present(c.inst, c.ninst) })
   if perf_touch_at.val >= 0.0 {
     perf_touch_submitted(work_now())
   }
   // what the shots being taken drew read back (shot.mbt)
-  c.shots_after_present(t)
+  @hostapi.work_part(fn() { "present/shots" }, fn() { c.shots_after_present(t) })
   log_drawn(w, h, scale, t)
   // (a frame of the looks alone drew no picture of its own: none is let go for it)
   if !looks_drawn.val {
-    c.trim_images()
+    @hostapi.work_part(fn() { "present/trim_images" }, fn() { c.trim_images() })
   }
   let t4 = work_now()
   let c4 = work_thread_cpu()
@@ -321,7 +322,7 @@ fn on_frame(w : Double, h : Double, scale : Double, t : Double) -> Unit {
   // counts it: perf.mbt)
   perf_tree_framed(t0 - tw)
   // (the frame into the window thread's journal, the interval it closes looked over: journal.mbt)
-  journal_frame(c, tw, t0, t3, t4, cw~, c3~, c4~)
+  journal_frame(c, tw, t0, t3, t4, cw~, c3~, c4~, frame_notes=Some(frame_notes))
   slow_probe(c, t, t3 - t0, t4 - t3, tree=t0 - tw)
   perf_log(c, t, t0 - tw, t3 - tw, t4 - t3)
   // (what the stacks the window's tree holds say of the frame, as it ends: built whole, painted alone or of its looks

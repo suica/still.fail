@@ -871,9 +871,16 @@ MB_CORNER_SL
 "    float kf = u.clip.y;\n"
 "    float4 m0 = u.rc, m1 = u.rs, m2 = u.outer, m3 = u.orc;\n"
 "    if (kf < 0.5) return src.sample(s, clamp(pos.xy * m0.xy, m0.xy * 0.5, m0.zw));\n"
-"    float sig1 = pow(sp, 1.0 / kf);\n"
 "    float r = clamp(ramp, 0.0, 1.0);\n"
-"    float target_px = r <= 0.0 ? 0.0 : sp * pow(r, 1.15);\n"
+"    if (r <= 0.0) return src.sample(s, clamp(pos.xy * m0.xy, m0.xy * 0.5, m0.zw));\n"
+"    if (r >= 1.0) {\n"
+"      int ki = int(kf + 0.5);\n"
+"      if (ki <= 1) return lv1.sample(s, clamp(pos.xy * m1.xy, m1.xy * 1.0, m1.zw));\n"
+"      if (ki == 2) return lv2.sample(s, clamp(pos.xy * m2.xy, m2.xy * 2.0, m2.zw));\n"
+"      return lv3.sample(s, clamp(pos.xy * m3.xy, m3.xy * 4.0, m3.zw));\n"
+"    }\n"
+"    float sig1 = pow(sp, 1.0 / kf);\n"
+"    float target_px = sp * pow(r, 1.15);\n"
 "    if (target_px <= sig1 || kf <= 1.05) {\n"
 "      float2 uv0_min = m0.xy * 0.5, uv0_max = m0.zw;\n"
 "      float2 c_uv = pos.xy * m0.xy;\n"
@@ -1218,7 +1225,7 @@ static void ensure_levels(int w, int h) {
 
 // one pass of the blur: src into dst's top left (w × h); mode 1 halving, 2 a Gaussian of deviation sg along (dx, dy)
 static void post_pass(id<MTLCommandBuffer> cb, id<MTLTexture> src, int sw, int sh, id<MTLTexture> dst, int w, int h,
-                      int mode, float sg, float dx, float dy, const MBContained *edge) {
+                      int mode, float sg, float dx, float dy, const MBContained *edge, const MTLScissorRect *sc_rect) {
   MTLRenderPassDescriptor *rp = [MTLRenderPassDescriptor renderPassDescriptor];
   rp.colorAttachments[0].texture = dst;
   rp.colorAttachments[0].loadAction = MTLLoadActionDontCare;
@@ -1226,7 +1233,7 @@ static void post_pass(id<MTLCommandBuffer> cb, id<MTLTexture> src, int sw, int s
   id<MTLRenderCommandEncoder> e = [cb renderCommandEncoderWithDescriptor:rp];
   [e setRenderPipelineState:dst.pixelFormat == MTLPixelFormatRGBA16Float ? ppipe_deep : ppipe];
   [e setViewport:(MTLViewport){0, 0, (double)w, (double)h, 0, 1}];
-  [e setScissorRect:(MTLScissorRect){0, 0, (NSUInteger)w, (NSUInteger)h}];
+  [e setScissorRect:sc_rect ? *sc_rect : (MTLScissorRect){0, 0, (NSUInteger)w, (NSUInteger)h}];
   float tw = 1.0f / (float)src.width, th = 1.0f / (float)src.height;
   struct { float a[4]; float b[4]; MBContained edge; } u = {{tw, th, (float)mode, sg}, {((float)sw - 0.5f) * tw, ((float)sh - 0.5f) * th, dx, dy}, {0}};
   if (edge) u.edge = *edge;
@@ -1327,6 +1334,7 @@ static int glass_through(const float *f, int32_t count) {
 // and uvc, which follow from these and the level's size). Zeroed whole first, so two of the same compare the same.
 typedef struct {
   int px0, py0, w, h, k, contained, progressive;
+  int vis_x, vis_y, vis_w, vis_h;
   float sg, sp;
   float fade[4], fadex[4];
   GU g;
@@ -1409,6 +1417,17 @@ static int grab_of(Grab *m, const float *f, int32_t start, int32_t end, int32_t 
       m->fade[i] = a[52 + i];
       m->fadex[i] = a[56 + i];
     }
+    int vx0 = (int)floorf(x0 * sc) - px0 - 2;
+    int vy0 = (int)floorf(y0 * sc) - py0 - 2;
+    int vx1 = (int)ceilf(x1 * sc) - px0 + 2;
+    int vy1 = (int)ceilf(y1 * sc) - py0 + 2;
+    if (vx0 < 0) vx0 = 0;
+    if (vy0 < 0) vy0 = 0;
+    if (vx1 > m->w) vx1 = m->w;
+    if (vy1 > m->h) vy1 = m->h;
+    if (vx1 <= vx0) { vx0 = 0; vx1 = m->w; }
+    if (vy1 <= vy0) { vy0 = 0; vy1 = m->h; }
+    m->vis_x = vx0; m->vis_y = vy0; m->vis_w = vx1 - vx0; m->vis_h = vy1 - vy0;
   }
   // down to where the deviation is 2 texels or more, at most 1/8
   float sp = blur * sc;
@@ -1443,8 +1462,15 @@ static void grab_map_uvc(const Grab *m, id<MTLTexture> bt, float map[4], float u
   float W = (float)bt.width, H = (float)bt.height, d = (float)(1 << sk);
   map[0] = sc / d / W; map[1] = sc / d / H;
   map[2] = -(float)m->px0 / d / W; map[3] = -(float)m->py0 / d / H;
-  uvc[0] = 0.5f / W; uvc[1] = 0.5f / H;
-  uvc[2] = ((float)lw[sk] - 0.5f) / W; uvc[3] = ((float)lh[sk] - 0.5f) / H;
+  if (m->progressive) {
+    uvc[0] = ((float)m->vis_x + 0.5f) / W;
+    uvc[1] = ((float)m->vis_y + 0.5f) / H;
+    uvc[2] = ((float)(m->vis_x + m->vis_w) - 0.5f) / W;
+    uvc[3] = ((float)(m->vis_y + m->vis_h) - 0.5f) / H;
+  } else {
+    uvc[0] = 0.5f / W; uvc[1] = 0.5f / H;
+    uvc[2] = ((float)lw[sk] - 0.5f) / W; uvc[3] = ((float)lh[sk] - 0.5f) / H;
+  }
 }
 
 // What the glass shows of a grab's blur in texture `bt` (level k's place in it): gtex and gu, its numbers with where
@@ -1480,14 +1506,14 @@ static void blur(id<MTLCommandBuffer> cb, id<MTLTexture> target, const Grab *m) 
   if (m->progressive) {
     float prev_var = 0.0f;
     for (int j = 1; j <= k; j++) {
-      post_pass(cb, lv[j - 1], lw[j - 1], lh[j - 1], lv[j], lw[j], lh[j], 1, 0, 0, 0, NULL);
+      post_pass(cb, lv[j - 1], lw[j - 1], lh[j - 1], lv[j], lw[j], lh[j], 1, 0, 0, 0, NULL, NULL);
       float target_px = powf(fmaxf(m->sp, 1.0f), (float)j / (float)k);
       float have_var = prev_var + 0.75f * (float)(1 << (2 * j - 2));
       float need_var = fmaxf(target_px * target_px - have_var, 0.0f);
       float sg_j = sqrtf(need_var) / (float)(1 << j);
       if (sg_j > 0.3f) {
-        post_pass(cb, lv[j], lw[j], lh[j], ltmp, lw[j], lh[j], 2, sg_j, 1, 0, NULL);
-        post_pass(cb, ltmp, lw[j], lh[j], lv[j], lw[j], lh[j], 2, sg_j, 0, 1, NULL);
+        post_pass(cb, lv[j], lw[j], lh[j], ltmp, lw[j], lh[j], 2, sg_j, 1, 0, NULL, NULL);
+        post_pass(cb, ltmp, lw[j], lh[j], lv[j], lw[j], lh[j], 2, sg_j, 0, 1, NULL, NULL);
       }
       prev_var = fmaxf(have_var, target_px * target_px);
     }
@@ -1504,16 +1530,17 @@ static void blur(id<MTLCommandBuffer> cb, id<MTLTexture> target, const Grab *m) 
       ms[j][0] = 1.0f / (dj * tw); ms[j][1] = 1.0f / (dj * th);
       ms[j][2] = ((float)lw[j] - 0.5f) / tw; ms[j][3] = ((float)lh[j] - 0.5f) / th;
     }
-    post_pass(cb, lv[0], lw[0], lh[0], ltmp, lw[0], lh[0], 4, 0, 0, 0, &prog);
+    MTLScissorRect sc_vis = {(NSUInteger)m->vis_x, (NSUInteger)m->vis_y, (NSUInteger)m->vis_w, (NSUInteger)m->vis_h};
+    post_pass(cb, lv[0], lw[0], lh[0], ltmp, lw[0], lh[0], 4, 0, 0, 0, &prog, &sc_vis);
     return;
   }
-  if (m->contained) post_pass(cb, lv[0], lw[0], lh[0], ltmp, lw[0], lh[0], 3, 0, 0, 0, &m->edge);
-  for (int j = 1; j <= k; j++) post_pass(cb, j == 1 && m->contained ? ltmp : lv[j - 1], lw[j - 1], lh[j - 1], lv[j], lw[j], lh[j], 1, 0, 0, 0, NULL);
+  if (m->contained) post_pass(cb, lv[0], lw[0], lh[0], ltmp, lw[0], lh[0], 3, 0, 0, 0, &m->edge, NULL);
+  for (int j = 1; j <= k; j++) post_pass(cb, j == 1 && m->contained ? ltmp : lv[j - 1], lw[j - 1], lh[j - 1], lv[j], lw[j], lh[j], 1, 0, 0, 0, NULL, NULL);
   if (m->sg > 0.3f) {
     id<MTLTexture> from = grab_blurred(m);
     id<MTLTexture> tmp = m->contained && k == 0 ? lv[0] : ltmp;
-    post_pass(cb, from, lw[k], lh[k], tmp, lw[k], lh[k], 2, m->sg, 1, 0, NULL);
-    post_pass(cb, tmp, lw[k], lh[k], from, lw[k], lh[k], 2, m->sg, 0, 1, NULL);
+    post_pass(cb, from, lw[k], lh[k], tmp, lw[k], lh[k], 2, m->sg, 1, 0, NULL, NULL);
+    post_pass(cb, tmp, lw[k], lh[k], from, lw[k], lh[k], 2, m->sg, 0, 1, NULL, NULL);
   }
 }
 
@@ -1538,10 +1565,12 @@ typedef struct {
   double key[7];
   int valid;
   unsigned used;
+  unsigned gen;
 } GlassSlot;
 static GlassSlot slots[MB_GLASS_SLOTS];
 static id<MTLTexture> slot_bt[MB_GLASS_SLOTS];
 static unsigned slots_clock;
+static unsigned slots_gen;
 
 static size_t glass_tex_bytes(id<MTLTexture> t) {
   if (!t) return 0;
@@ -1962,36 +1991,99 @@ static int reaches(const float *f, int32_t i, int32_t run, const float g[4]) {
   return x1 > g[0] && x0 < g[2] && y1 > g[1] && y0 < g[3];
 }
 
-// What the capture of the run at start is of (under_now): every instance before the last glass (or what draws by a
-// glass's blur) that reaches into its rectangle (that glass shows what is under it, wherever that is), those after it that reach into it, and the frame's
-// shapes' pieces (from `pieces` on). 0 when a stream or a native view's hole is among them.
+// What the capture of the run at start is of (under_now): exact spatial dependency closure of every instance before
+// start whose pixels (directly, or transitively through an earlier glass capture or adaptive ink sample) reach into
+// the capture's rectangle, plus the frame's shapes' pieces (from `pieces` on). 0 when a stream or a native view's
+// hole is among them.
 static int under_take(const float *f, int32_t start, int32_t count, int32_t pieces, const Grab *m) {
   float sc = (float)at_scale;
-  float g[4] = {(float)m->px0 / sc - 1.0f, (float)m->py0 / sc - 1.0f, (float)(m->px0 + m->w) / sc + 1.0f,
-                (float)(m->py0 + m->h) / sc + 1.0f};
-  int32_t whole = 0, run = 0;
-  for (int32_t i = 0; i < start; i++) {
-    float tid = f[(size_t)i * MB_INST + 20];
-    if (i > 0 && tid != f[(size_t)(i - 1) * MB_INST + 20]) run = i;
-    // (glass, and what is drawn by what a glass's blur shows: adaptive words/icons/lines over it)
-    int k = (int)(f[(size_t)i * MB_INST + 5] + 0.5f);
-    int sees = tid < 0.0f || k == 7 || ((k == 10 || k == 11) && f[(size_t)i * MB_INST + 23] > 0.0f);
-    if (sees && reaches(f, i, run, g)) whole = i + 1;
+  float dep[4] = {(float)m->px0 / sc - 1.0f, (float)m->py0 / sc - 1.0f, (float)(m->px0 + m->w) / sc + 1.0f,
+                  (float)(m->py0 + m->h) / sc + 1.0f};
+  float seen_tids[32];
+  int seen_n = 0;
+  for (int pass = 0; pass < 4; pass++) {
+    int grew = 0;
+    for (int32_t i = start - 1; i >= 0; i--) {
+      const float *bi = f + (size_t)i * MB_INST;
+      float tid = bi[20];
+      int k = (int)(bi[5] + 0.5f);
+      int is_glass = tid < 0.0f;
+      int is_ad = k == 7 || ((k == 10 || k == 11) && bi[23] > 0.0f);
+      if (!is_glass && !is_ad) continue;
+      int32_t run = i;
+      if (is_glass) {
+        while (run > 0 && f[(size_t)(run - 1) * MB_INST + 20] == tid) run--;
+      }
+      if (!reaches(f, i, run, dep)) continue;
+      if (is_glass) {
+        int already = 0;
+        for (int s = 0; s < seen_n; s++) {
+          if (seen_tids[s] == tid) { already = 1; break; }
+        }
+        if (already) continue;
+        if (seen_n < 32) seen_tids[seen_n++] = tid;
+        int32_t first_i = run;
+        for (int32_t j = 0; j < run; j++) {
+          if (f[(size_t)j * MB_INST + 20] == tid) { first_i = j; break; }
+        }
+        const float *a = f + (size_t)first_i * MB_INST;
+        int gkind = (int)(a[5] + 0.5f);
+        int is_contained = (gkind == 5 && a[7] < 0.0f);
+        float blur_r = (gkind == 6 && a[7] < 0.0f) ? 0.0f : fabsf(a[7]);
+        int merged_liquid = (gkind == 6 && a[23] > 0.0f);
+        int unmerged_liquid = (gkind == 6 && !merged_liquid);
+        float margin = is_contained ? 0.0f : 3.0f * blur_r + (gkind == 6 ? a[21] * (1.0f + fabsf(a[22])) + fmaxf(a[23], 0.0f) : 0.0f) + 2.0f;
+        float gx0 = 1e9f, gy0 = 1e9f, gx1 = -1e9f, gy1 = -1e9f;
+        for (int32_t j = first_i; j < count; j++) {
+          const float *b = f + (size_t)j * MB_INST;
+          if (b[20] != tid) continue;
+          float bx0, by0, bx1, by1;
+          if (gkind == 6) {
+            float m23 = fmaxf(unmerged_liquid ? b[23] : a[23], 0.0f);
+            bx0 = b[0] - m23; by0 = b[1] - m23; bx1 = b[0] + b[2] + m23; by1 = b[1] + b[3] + m23;
+            if (unmerged_liquid) {
+              float bm = 3.0f * blur_r + b[21] * (1.0f + fabsf(b[22])) + m23 + 2.0f;
+              if (bm > margin) margin = bm;
+            }
+          } else {
+            bx0 = fmaxf(b[0], b[16]); by0 = fmaxf(b[1], b[17]);
+            bx1 = fminf(b[0] + b[2], b[18]); by1 = fminf(b[1] + b[3], b[19]);
+          }
+          gx0 = fminf(gx0, bx0); gy0 = fminf(gy0, by0);
+          gx1 = fmaxf(gx1, bx1); gy1 = fmaxf(gy1, by1);
+        }
+        if (gx1 > gx0 && gy1 > gy0) {
+          float ex0 = gx0 - margin - 2.0f, ey0 = gy0 - margin - 2.0f;
+          float ex1 = gx1 + margin + 2.0f, ey1 = gy1 + margin + 2.0f;
+          if (ex0 < dep[0]) { dep[0] = ex0; grew = 1; }
+          if (ey0 < dep[1]) { dep[1] = ey0; grew = 1; }
+          if (ex1 > dep[2]) { dep[2] = ex1; grew = 1; }
+          if (ey1 > dep[3]) { dep[3] = ey1; grew = 1; }
+        }
+      } else {
+        float rad = bi[23] + 4.0f;
+        float ex0 = bi[21] - rad, ey0 = bi[22] - rad;
+        float ex1 = bi[21] + rad, ey1 = bi[22] + rad;
+        if (ex0 < dep[0]) { dep[0] = ex0; grew = 1; }
+        if (ey0 < dep[1]) { dep[1] = ey0; grew = 1; }
+        if (ex1 > dep[2]) { dep[2] = ex1; grew = 1; }
+        if (ey1 > dep[3]) { dep[3] = ey1; grew = 1; }
+      }
+    }
+    if (!grew) break;
   }
   size_t most = ((size_t)start + (size_t)(count - pieces)) * MB_INST;
   if (under_now_cap < most) {
     under_now_cap = most;
     under_now = realloc(under_now, under_now_cap * sizeof(float));
   }
-  for (int32_t i = 0; i < whole; i++)
-    if (f[(size_t)i * MB_INST + 20] > (float)MB_STREAM_TEX) return 0;
   float *o = under_now;
-  memcpy(o, f, (size_t)whole * MB_INST * sizeof(float));
-  o += (size_t)whole * MB_INST;
-  int32_t picked = 0;
-  for (int32_t i = whole; i < start; i++) {
-    if (!reaches(f, i, i, g)) continue;
-    if (f[(size_t)i * MB_INST + 20] > (float)MB_STREAM_TEX) return 0;
+  int32_t picked = 0, run = 0;
+  for (int32_t i = 0; i < start; i++) {
+    float tid = f[(size_t)i * MB_INST + 20];
+    if (i > 0 && tid != f[(size_t)(i - 1) * MB_INST + 20]) run = i;
+    if (!reaches(f, i, run, dep)) continue;
+    if (tid > (float)MB_STREAM_TEX) return 0;
     memcpy(o, f + (size_t)i * MB_INST, MB_INST * sizeof(float));
     o += MB_INST;
     picked++;
@@ -1999,7 +2091,7 @@ static int under_take(const float *f, int32_t start, int32_t count, int32_t piec
   memcpy(o, f + (size_t)pieces * MB_INST, (size_t)(count - pieces) * MB_INST * sizeof(float));
   o += (size_t)(count - pieces) * MB_INST;
   under_now_n = (size_t)(o - under_now);
-  under_whole = whole;
+  under_whole = 0;
   under_picked = picked;
   return 1;
 }
@@ -2083,6 +2175,7 @@ static int slot_fill(id<MTLCommandBuffer> cb, const Grab *m, unsigned frame_cloc
   }
   int i = t0 >= 0 ? t0 : t1 >= 0 ? t1 : t2 >= 0 ? t2 : t3 >= 0 ? t3 : t4 >= 0 ? t4 : fallback;
   slots[i].valid = 0;
+  slots[i].gen = ++slots_gen;
   if (use_swap) {
     if (slot_bt[i] != nil && (int)slot_bt[i].width == Lw && (int)slot_bt[i].height == Lh &&
         slot_bt[i].pixelFormat == L.pixelFormat) {
@@ -2267,8 +2360,15 @@ static void encode(id<MTLCommandBuffer> cb, id<MTLTexture> target, id<MTLRenderP
   // Pre-scan glass captures before opening the main render pass: size blur levels once, and batch adaptive updates for
   // blur-cache-hit groups into a single pass before begin_pass so the Retina canvas is not Store/Load split mid-pass.
   int levels_sized = 0;
+  struct {
+    int tid;
+    int slot;
+    unsigned gen;
+    Grab grab;
+  } pre_hits[16];
+  int pre_hits_n = 0;
   {
-    int max_w = 0, max_h = 0, scan_bound = 0, any_glass = 0;
+    int max_w = 0, max_h = 0, all_max_w = 0, all_max_h = 0, scan_bound = 0, any_glass = 0;
     for (int32_t s0 = 0; s0 < count;) {
       int stid = (int)f[s0 * MB_INST + 20];
       int32_t e0 = s0 + 1;
@@ -2278,9 +2378,13 @@ static void encode(id<MTLCommandBuffer> cb, id<MTLTexture> target, id<MTLRenderP
         if (stid != scan_bound) {
           scan_bound = stid;
           Grab gm;
-          if (grab_of(&gm, f, s0, e0, count, (int)target.width, (int)target.height) && grab_in_part(&gm)) {
-            if (gm.w > max_w) max_w = gm.w;
-            if (gm.h > max_h) max_h = gm.h;
+          if (grab_of(&gm, f, s0, e0, count, (int)target.width, (int)target.height)) {
+            if (gm.w > all_max_w) all_max_w = gm.w;
+            if (gm.h > all_max_h) all_max_h = gm.h;
+            if (grab_in_part(&gm)) {
+              if (gm.w > max_w) max_w = gm.w;
+              if (gm.h > max_h) max_h = gm.h;
+            }
           }
         }
       }
@@ -2288,7 +2392,12 @@ static void encode(id<MTLCommandBuffer> cb, id<MTLTexture> target, id<MTLRenderP
     }
     if (any_glass) {
       levels_sized = 1;
-      if (max_w > lv_w || max_h > lv_h) ensure_levels(max_w, max_h);
+      if (max_w > lv_w || max_h > lv_h) {
+        ensure_levels(max_w, max_h);
+      } else if (ad_dt >= 0.0 && lv[0] && all_max_w > 0 && all_max_h > 0) {
+        if (all_max_w > lv_frame_max_w) lv_frame_max_w = all_max_w;
+        if (all_max_h > lv_frame_max_h) lv_frame_max_h = all_max_h;
+      }
       if (at_win && ad_dt >= 0.0) {
         AdBatchItem pre_batch[MB_ADAPTIVE_MAX];
         int pre_n = 0;
@@ -2307,6 +2416,13 @@ static void encode(id<MTLCommandBuffer> cb, id<MTLTexture> target, id<MTLRenderP
                     under_take(f, s0, count, seg_base, &gm)) {
                   int sl = slot_same(&gm, key);
                   if (sl >= 0 && slot_bt[sl]) {
+                    if (pre_hits_n < 16) {
+                      pre_hits[pre_hits_n].tid = stid;
+                      pre_hits[pre_hits_n].slot = sl;
+                      pre_hits[pre_hits_n].gen = slots[sl].gen;
+                      pre_hits[pre_hits_n].grab = gm;
+                      pre_hits_n++;
+                    }
                     AdPending tmp[MB_ADAPTIVE_MAX];
                     int nu = ad_collect_and_match(at_win, f, s0, e0, count, &gm, 0, ad_dt, ad_serial, tmp);
                     if (nu > 0) {
@@ -2388,13 +2504,28 @@ static void encode(id<MTLCommandBuffer> cb, id<MTLTexture> target, id<MTLRenderP
       }
       if (tid != bound) {
         Grab m;
-        shows = grab_of(&m, f, start, end, count, (int)target.width, (int)target.height);
-        // (a capture outside the part drawn: neither copied nor drawn, the blur kept as it was. One that meets it is
-        // in it whole: the app's part takes in all a capture it reaches copies, @damage)
-        shows = shows && grab_in_part(&m);
         double key[7] = {target.width, target.height, at_scale, r, g, b, alpha};
-        int known = shows && under_take(f, start, count, seg_base, &m);
-        int slot = known ? slot_same(&m, key) : -1;
+        int known = 0, slot = -1;
+        for (int h = 0; h < pre_hits_n; h++) {
+          if (pre_hits[h].tid == tid) {
+            int hs = pre_hits[h].slot;
+            if (slots[hs].valid && slot_bt[hs] && slots[hs].gen == pre_hits[h].gen) {
+              m = pre_hits[h].grab;
+              shows = 1;
+              known = 1;
+              slot = hs;
+            }
+            break;
+          }
+        }
+        if (slot < 0) {
+          shows = grab_of(&m, f, start, end, count, (int)target.width, (int)target.height);
+          // (a capture outside the part drawn: neither copied nor drawn, the blur kept as it was. One that meets it is
+          // in it whole: the app's part takes in all a capture it reaches copies, @damage)
+          shows = shows && grab_in_part(&m);
+          known = shows && under_take(f, start, count, seg_base, &m);
+          slot = known ? slot_same(&m, key) : -1;
+        }
         AdPending ad_pend[MB_ADAPTIVE_MAX];
         int ad_n_upd = 0;
         if (slot >= 0) {

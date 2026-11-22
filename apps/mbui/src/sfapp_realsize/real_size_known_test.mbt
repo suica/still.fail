@@ -449,7 +449,7 @@ let real_size_known : Map[String, (Int, Int, Int)] = {
   "phone settings-add-people": (711, 482, 80),
   "phone settings-workspace-mark": (855, 588, 71),
   "phone settings-local-fonts": (535, 664, 124),
-  "phone settings-policy": (407, 279, 42),
+  "phone settings-policy": (407, 253, 42),
   "phone settings-policy-text": (451, 319, 47),
   "phone settings-policy-option": (456, 319, 46),
   // Raised 2026-11-17: what it opens with up a sheet of the window's tree on 小屏 (as phone newchat-preset's).

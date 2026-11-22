@@ -115,6 +115,10 @@ struct RenderWin {
   double ad_last_time;
   uint64_t ad_frame_serial;
   int ad_settling;
+  UINT last_present_count;
+  UINT last_sync_refresh;
+  int64_t last_present_qpc;
+  int has_frame_stats;
 };
 static RenderWin render_wins[MB_WINS];
 static RenderWin *rw = &render_wins[0];
@@ -897,9 +901,16 @@ static const char *prog_src =
     "  float kf = pc[3].y;\n"
     "  float4 m0 = pc[4], m1 = pc[5], m2 = pc[6], m3 = pc[7];\n"
     "  if (kf < 0.5) return lv0.SampleLevel(samp, clamp(pos.xy * m0.xy, m0.xy * 0.5, m0.zw), 0);\n"
-    "  float sig1 = pow(sp, 1.0 / kf);\n"
     "  float r = saturate(ramp);\n"
-    "  float target_px = r <= 0.0 ? 0.0 : sp * pow(r, 1.15);\n"
+    "  if (r <= 0.0) return lv0.SampleLevel(samp, clamp(pos.xy * m0.xy, m0.xy * 0.5, m0.zw), 0);\n"
+    "  if (r >= 1.0) {\n"
+    "    int ki = int(kf + 0.5);\n"
+    "    if (ki <= 1) return lv1.SampleLevel(samp, clamp(pos.xy * m1.xy, m1.xy * 1.0, m1.zw), 0);\n"
+    "    if (ki == 2) return lv2.SampleLevel(samp, clamp(pos.xy * m2.xy, m2.xy * 2.0, m2.zw), 0);\n"
+    "    return lv3.SampleLevel(samp, clamp(pos.xy * m3.xy, m3.xy * 4.0, m3.zw), 0);\n"
+    "  }\n"
+    "  float sig1 = pow(sp, 1.0 / kf);\n"
+    "  float target_px = sp * pow(r, 1.15);\n"
     "  if (target_px <= sig1 || kf <= 1.05) {\n"
     "    float2 uv0_min = m0.xy * 0.5, uv0_max = m0.zw;\n"
     "    float2 c_uv = pos.xy * m0.xy;\n"
@@ -1825,6 +1836,7 @@ static void ad_finalize_frame(RenderWin *w, int whole_frame, uint64_t serial) {
 
 struct Grab {
   int px0, py0, w, h, k, contained, progressive;
+  int vis_x, vis_y, vis_w, vis_h;
   float sg, sp;
   float fade[4], fadex[4];
   GU g;
@@ -2078,6 +2090,17 @@ static int grab_of(Grab *m, const float *f, int32_t start, int32_t end, int32_t 
       m->fade[i] = a[52 + i];
       m->fadex[i] = a[56 + i];
     }
+    int vx0 = (int)floorf(x0 * sc) - px0 - 2;
+    int vy0 = (int)floorf(y0 * sc) - py0 - 2;
+    int vx1 = (int)ceilf(x1 * sc) - px0 + 2;
+    int vy1 = (int)ceilf(y1 * sc) - py0 + 2;
+    if (vx0 < 0) vx0 = 0;
+    if (vy0 < 0) vy0 = 0;
+    if (vx1 > m->w) vx1 = m->w;
+    if (vy1 > m->h) vy1 = m->h;
+    if (vx1 <= vx0) { vx0 = 0; vx1 = m->w; }
+    if (vy1 <= vy0) { vy0 = 0; vy1 = m->h; }
+    m->vis_x = vx0; m->vis_y = vy0; m->vis_w = vx1 - vx0; m->vis_h = vy1 - vy0;
   }
   float sp = blur_r * sc;
   int k = 0;
@@ -2111,8 +2134,13 @@ static void show_blur(const Grab *m, const level *L) {
   float d = (float)(1 << sk);
   gu.map[0] = sc / d / L->w; gu.map[1] = sc / d / L->h;
   gu.map[2] = -(float)m->px0 / d / L->w; gu.map[3] = -(float)m->py0 / d / L->h;
-  gu.uvc[0] = 0.5f / L->w; gu.uvc[1] = 0.5f / L->h;
-  gu.uvc[2] = (lw[sk] - 0.5f) / L->w; gu.uvc[3] = (lh[sk] - 0.5f) / L->h;
+  if (m->progressive) {
+    gu.uvc[0] = ((float)m->vis_x + 0.5f) / L->w; gu.uvc[1] = ((float)m->vis_y + 0.5f) / L->h;
+    gu.uvc[2] = ((float)(m->vis_x + m->vis_w) - 0.5f) / L->w; gu.uvc[3] = ((float)(m->vis_y + m->vis_h) - 0.5f) / L->h;
+  } else {
+    gu.uvc[0] = 0.5f / L->w; gu.uvc[1] = 0.5f / L->h;
+    gu.uvc[2] = (lw[sk] - 0.5f) / L->w; gu.uvc[3] = (lh[sk] - 0.5f) / L->h;
+  }
 }
 
 static int reaches(const float *f, int32_t i, int32_t run, const float g[4]) {
@@ -2129,15 +2157,82 @@ static int reaches(const float *f, int32_t i, int32_t run, const float g[4]) {
 
 static int under_take(const float *f, int32_t start, int32_t count, int32_t pieces, const Grab *m) {
   float sc = (float)vscale;
-  float g[4] = {(float)m->px0 / sc - 1.0f, (float)m->py0 / sc - 1.0f, (float)(m->px0 + m->w) / sc + 1.0f,
-                (float)(m->py0 + m->h) / sc + 1.0f};
-  int32_t whole = 0, run = 0;
-  for (int32_t i = 0; i < start; i++) {
-    float tid = f[(size_t)i * MB_INST + 20];
-    if (i > 0 && tid != f[(size_t)(i - 1) * MB_INST + 20]) run = i;
-    int k = (int)(f[(size_t)i * MB_INST + 5] + 0.5f);
-    int sees = tid < 0.0f || k == 7 || ((k == 10 || k == 11) && f[(size_t)i * MB_INST + 23] > 0.0f);
-    if (sees && reaches(f, i, run, g)) whole = i + 1;
+  float dep[4] = {(float)m->px0 / sc - 1.0f, (float)m->py0 / sc - 1.0f, (float)(m->px0 + m->w) / sc + 1.0f,
+                  (float)(m->py0 + m->h) / sc + 1.0f};
+  float seen_tids[32];
+  int seen_n = 0;
+  for (int pass = 0; pass < 4; pass++) {
+    int grew = 0;
+    for (int32_t i = start - 1; i >= 0; i--) {
+      const float *bi = f + (size_t)i * MB_INST;
+      float tid = bi[20];
+      int k = (int)(bi[5] + 0.5f);
+      int is_glass = tid < 0.0f;
+      int is_ad = k == 7 || ((k == 10 || k == 11) && bi[23] > 0.0f);
+      if (!is_glass && !is_ad) continue;
+      int32_t run = i;
+      if (is_glass) {
+        while (run > 0 && f[(size_t)(run - 1) * MB_INST + 20] == tid) run--;
+      }
+      if (!reaches(f, i, run, dep)) continue;
+      if (is_glass) {
+        int already = 0;
+        for (int s = 0; s < seen_n; s++) {
+          if (seen_tids[s] == tid) { already = 1; break; }
+        }
+        if (already) continue;
+        if (seen_n < 32) seen_tids[seen_n++] = tid;
+        int32_t first_i = run;
+        for (int32_t j = 0; j < run; j++) {
+          if (f[(size_t)j * MB_INST + 20] == tid) { first_i = j; break; }
+        }
+        const float *a = f + (size_t)first_i * MB_INST;
+        int gkind = (int)(a[5] + 0.5f);
+        int is_contained = (gkind == 5 && a[7] < 0.0f);
+        float blur_r = (gkind == 6 && a[7] < 0.0f) ? 0.0f : fabsf(a[7]);
+        int merged_liquid = (gkind == 6 && a[23] > 0.0f);
+        int unmerged_liquid = (gkind == 6 && !merged_liquid);
+        float margin = is_contained ? 0.0f : 3.0f * blur_r + (gkind == 6 ? a[21] * (1.0f + fabsf(a[22])) + fmaxf(a[23], 0.0f) : 0.0f) + 2.0f;
+        float gx0 = 1e9f, gy0 = 1e9f, gx1 = -1e9f, gy1 = -1e9f;
+        for (int32_t j = first_i; j < count; j++) {
+          const float *b = f + (size_t)j * MB_INST;
+          if (b[20] != tid) continue;
+          float bx0, by0, bx1, by1;
+          if (gkind == 6) {
+            float m23 = fmaxf(unmerged_liquid ? b[23] : a[23], 0.0f);
+            bx0 = b[0] - m23; by0 = b[1] - m23; bx1 = b[0] + b[2] + m23; by1 = b[1] + b[3] + m23;
+            if (unmerged_liquid) {
+              float bm = 3.0f * blur_r + b[21] * (1.0f + fabsf(b[22])) + m23 + 2.0f;
+              if (bm > margin) margin = bm;
+            }
+          } else {
+            bx0 = b[0] > b[16] ? b[0] : b[16]; by0 = b[1] > b[17] ? b[1] : b[17];
+            bx1 = b[0] + b[2] < b[18] ? b[0] + b[2] : b[18]; by1 = b[1] + b[3] < b[19] ? b[1] + b[3] : b[19];
+          }
+          if (bx0 < gx0) gx0 = bx0;
+          if (by0 < gy0) gy0 = by0;
+          if (bx1 > gx1) gx1 = bx1;
+          if (by1 > gy1) gy1 = by1;
+        }
+        if (gx1 > gx0 && gy1 > gy0) {
+          float ex0 = gx0 - margin - 2.0f, ey0 = gy0 - margin - 2.0f;
+          float ex1 = gx1 + margin + 2.0f, ey1 = gy1 + margin + 2.0f;
+          if (ex0 < dep[0]) { dep[0] = ex0; grew = 1; }
+          if (ey0 < dep[1]) { dep[1] = ey0; grew = 1; }
+          if (ex1 > dep[2]) { dep[2] = ex1; grew = 1; }
+          if (ey1 > dep[3]) { dep[3] = ey1; grew = 1; }
+        }
+      } else {
+        float rad = bi[23] + 4.0f;
+        float ex0 = bi[21] - rad, ey0 = bi[22] - rad;
+        float ex1 = bi[21] + rad, ey1 = bi[22] + rad;
+        if (ex0 < dep[0]) { dep[0] = ex0; grew = 1; }
+        if (ey0 < dep[1]) { dep[1] = ey0; grew = 1; }
+        if (ex1 > dep[2]) { dep[2] = ex1; grew = 1; }
+        if (ey1 > dep[3]) { dep[3] = ey1; grew = 1; }
+      }
+    }
+    if (!grew) break;
   }
   size_t most = ((size_t)start + (size_t)(count - pieces)) * MB_INST;
   if (under_now_cap < most) {
@@ -2146,15 +2241,13 @@ static int under_take(const float *f, int32_t start, int32_t count, int32_t piec
     under_now = grown;
     under_now_cap = most;
   }
-  for (int32_t i = 0; i < whole; i++)
-    if (f[(size_t)i * MB_INST + 20] > (float)MB_STREAM_TEX) return 0;
   float *o = under_now;
-  memcpy(o, f, (size_t)whole * MB_INST * sizeof(float));
-  o += (size_t)whole * MB_INST;
-  int32_t picked = 0;
-  for (int32_t i = whole; i < start; i++) {
-    if (!reaches(f, i, i, g)) continue;
-    if (f[(size_t)i * MB_INST + 20] > (float)MB_STREAM_TEX) return 0;
+  int32_t picked = 0, run = 0;
+  for (int32_t i = 0; i < start; i++) {
+    float tid = f[(size_t)i * MB_INST + 20];
+    if (i > 0 && tid != f[(size_t)(i - 1) * MB_INST + 20]) run = i;
+    if (!reaches(f, i, run, dep)) continue;
+    if (tid > (float)MB_STREAM_TEX) return 0;
     memcpy(o, f + (size_t)i * MB_INST, MB_INST * sizeof(float));
     o += MB_INST;
     picked++;
@@ -2162,7 +2255,7 @@ static int under_take(const float *f, int32_t start, int32_t count, int32_t piec
   memcpy(o, f + (size_t)pieces * MB_INST, (size_t)(count - pieces) * MB_INST * sizeof(float));
   o += (size_t)(count - pieces) * MB_INST;
   under_now_n = (size_t)(o - under_now);
-  under_whole = whole;
+  under_whole = 0;
   under_picked = picked;
   return 1;
 }
@@ -2290,7 +2383,11 @@ static int blur_grab(ID3D11RenderTargetView *target, const Grab *m) {
     ctx->PSSetConstantBuffers(0, 1, &pbuf);
     ID3D11ShaderResourceView *srvs[4] = {lv[0].srv, lv[1].srv, lv[2].srv, lv[3].srv};
     ctx->PSSetShaderResources(0, 4, srvs);
+    ctx->RSSetState(raster_cut);
+    D3D11_RECT vsc = {m->vis_x, m->vis_y, m->vis_x + m->vis_w, m->vis_y + m->vis_h};
+    ctx->RSSetScissorRects(1, &vsc);
     ctx->Draw(3, 0);
+    ctx->RSSetState(raster);
     ctx->PSSetShaderResources(0, 4, none4);
   } else {
     if (m->contained) {
@@ -2579,6 +2676,143 @@ static void encode(ID3D11RenderTargetView *target, int pw, int ph, int32_t count
 #define MB_WIN_CREATE_BUFFER(d, desc, init, out) ((d)->CreateBuffer((desc), (init), (out)))
 #endif
 
+// Non-blocking D3D11 GPU timestamp disjoint query ring (4 slots): polls completed oldest slots with
+// D3D11_ASYNC_GETDATA_DONOTFLUSH (zero pipeline stall) and gracefully degrades to -1.0 if CreateQuery fails.
+#define MB_GPU_Q_SLOTS 4
+struct GpuQuerySlot {
+  ID3D11Query *disjoint;
+  ID3D11Query *ts_begin;
+  ID3D11Query *ts_end;
+  int in_flight;
+};
+static GpuQuerySlot gpu_q[MB_GPU_Q_SLOTS];
+static int gpu_q_head = 0;
+static int gpu_q_tail = 0;
+static int gpu_q_init_done = 0;
+static int gpu_q_ok = 0;
+static double last_gpu_ms = -1.0;
+static int32_t present_dropped = 0;
+
+static void gpu_q_free(void) {
+  for (int i = 0; i < MB_GPU_Q_SLOTS; i++) {
+    if (gpu_q[i].disjoint) {
+      gpu_q[i].disjoint->Release();
+      gpu_q[i].disjoint = NULL;
+    }
+    if (gpu_q[i].ts_begin) {
+      gpu_q[i].ts_begin->Release();
+      gpu_q[i].ts_begin = NULL;
+    }
+    if (gpu_q[i].ts_end) {
+      gpu_q[i].ts_end->Release();
+      gpu_q[i].ts_end = NULL;
+    }
+    gpu_q[i].in_flight = 0;
+  }
+  gpu_q_head = 0;
+  gpu_q_tail = 0;
+  gpu_q_init_done = 0;
+  gpu_q_ok = 0;
+}
+
+static int gpu_q_ensure(void) {
+  if (gpu_q_init_done) return gpu_q_ok;
+  gpu_q_init_done = 1;
+  gpu_q_ok = 0;
+  if (!dev || !ctx) return 0;
+  D3D11_QUERY_DESC dq = {};
+  dq.Query = D3D11_QUERY_TIMESTAMP_DISJOINT;
+  D3D11_QUERY_DESC tq = {};
+  tq.Query = D3D11_QUERY_TIMESTAMP;
+  for (int i = 0; i < MB_GPU_Q_SLOTS; i++) {
+    if (FAILED(dev->CreateQuery(&dq, &gpu_q[i].disjoint)) || !gpu_q[i].disjoint ||
+        FAILED(dev->CreateQuery(&tq, &gpu_q[i].ts_begin)) || !gpu_q[i].ts_begin ||
+        FAILED(dev->CreateQuery(&tq, &gpu_q[i].ts_end)) || !gpu_q[i].ts_end) {
+      gpu_q_free();
+      gpu_q_init_done = 1;
+      gpu_q_ok = 0;
+      return 0;
+    }
+    gpu_q[i].in_flight = 0;
+  }
+  gpu_q_head = 0;
+  gpu_q_tail = 0;
+  gpu_q_ok = 1;
+  return 1;
+}
+
+static void gpu_q_poll(void) {
+  if (!ctx || !gpu_q_ok) return;
+  for (int n = 0; n < MB_GPU_Q_SLOTS; n++) {
+    GpuQuerySlot *s = &gpu_q[gpu_q_head];
+    if (!s->in_flight) break;
+    D3D11_QUERY_DATA_TIMESTAMP_DISJOINT dj = {};
+    UINT64 t0 = 0, t1 = 0;
+    HRESULT hr_d = ctx->GetData(s->disjoint, &dj, sizeof dj, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    if (hr_d == S_FALSE) break;
+    if (FAILED(hr_d)) {
+      s->in_flight = 0;
+      gpu_q_head = (gpu_q_head + 1) % MB_GPU_Q_SLOTS;
+      continue;
+    }
+    HRESULT hr_0 = ctx->GetData(s->ts_begin, &t0, sizeof t0, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    if (hr_0 == S_FALSE) break;
+    HRESULT hr_1 = ctx->GetData(s->ts_end, &t1, sizeof t1, D3D11_ASYNC_GETDATA_DONOTFLUSH);
+    if (hr_1 == S_FALSE) break;
+    if (hr_0 == S_OK && hr_1 == S_OK && !dj.Disjoint && dj.Frequency > 0 && t1 >= t0) {
+      last_gpu_ms = (double)(t1 - t0) * 1000.0 / (double)dj.Frequency;
+    }
+    s->in_flight = 0;
+    gpu_q_head = (gpu_q_head + 1) % MB_GPU_Q_SLOTS;
+  }
+}
+
+static int gpu_q_begin(void) {
+  if (!gpu_q_ensure()) return -1;
+  gpu_q_poll();
+  int idx = gpu_q_tail;
+  if (gpu_q[idx].in_flight) return -1;
+  ctx->Begin(gpu_q[idx].disjoint);
+  ctx->End(gpu_q[idx].ts_begin);
+  return idx;
+}
+
+static void gpu_q_end(int idx) {
+  if (idx < 0 || idx >= MB_GPU_Q_SLOTS || !ctx || !gpu_q_ok) return;
+  ctx->End(gpu_q[idx].ts_end);
+  ctx->End(gpu_q[idx].disjoint);
+  gpu_q[idx].in_flight = 1;
+  gpu_q_tail = (idx + 1) % MB_GPU_Q_SLOTS;
+}
+
+#define MB_WIN_DROPPED_CLAMP 10
+// Pure logic for counting dropped frames from consecutive DXGI_FRAME_STATISTICS samples:
+// counts drops only when consecutive presents are within 2.5 * period_ms (continuous animation/scroll, not idle pauses).
+static int32_t win_count_dropped_step(UINT prev_present, UINT prev_sync, int64_t prev_qpc, int has_prev,
+                                      UINT cur_present, UINT cur_sync, int64_t cur_qpc,
+                                      int64_t qpc_freq, double period_ms) {
+  if (!has_prev || qpc_freq <= 0 || period_ms <= 0.0) return 0;
+  if (cur_qpc <= prev_qpc) return 0;
+  double dt_ms = (double)(cur_qpc - prev_qpc) * 1000.0 / (double)qpc_freq;
+  if (dt_ms >= 2.5 * period_ms) return 0;
+  if (cur_present <= prev_present || cur_sync <= prev_sync) return 0;
+  UINT d_present = cur_present - prev_present;
+  UINT d_sync = cur_sync - prev_sync;
+  if (d_sync <= d_present) return 0;
+  UINT dropped = d_sync - d_present;
+  if (dropped > MB_WIN_DROPPED_CLAMP) dropped = MB_WIN_DROPPED_CLAMP;
+  return (int32_t)dropped;
+}
+
+static double win_display_period_ms(int64_t qpc_freq) {
+  DWM_TIMING_INFO ti = {};
+  ti.cbSize = sizeof ti;
+  if (qpc_freq > 0 && SUCCEEDED(DwmGetCompositionTimingInfo(NULL, &ti)) && ti.qpcRefreshPeriod) {
+    return (double)ti.qpcRefreshPeriod * 1000.0 / (double)qpc_freq * (double)mb_frame_beats();
+  }
+  return 1000.0 / 60.0;
+}
+
 // Ensures `vbuf` can hold at least `room` bytes: doubles when possible, falls back to exact `room`, and always clears
 // `vbuf`/`vbuf_cap` on failure so callers never dereference a stale or NULL buffer.
 static int ensure_vbuf(size_t room) {
@@ -2652,6 +2886,7 @@ static int submit(const double *inst, int32_t count, double r, double g, double 
   last_bg[1] = (float)g;
   last_bg[2] = (float)b;
   // a window's into its canvas; without one, the offscreen target is kept as a canvas is
+  int qslot = gpu_q_begin();
   ID3D11RenderTargetView *target = rtv;
   int *kept = &off_ok;
   if (chain) {
@@ -2659,6 +2894,7 @@ static int submit(const double *inst, int32_t count, double r, double g, double 
     if (!canvas_rtv) {
       dirty_told = dirty_whole = dirty_n = 0;
       encode(rtv, fb_w, fb_h, count, last_bg, last_inst);
+      gpu_q_end(qslot);
       if (parts_out) *parts_out = -1;
       return 1;
     }
@@ -2689,6 +2925,7 @@ static int submit(const double *inst, int32_t count, double r, double g, double 
     ctx->CopyResource(back, canvas);
     back->Release();
   }
+  gpu_q_end(qslot);
   return 1;
 }
 
@@ -2765,6 +3002,25 @@ int mb_render_present(const double *inst, int32_t count, double r, double g, dou
     hr = chain->Present(1, 0);
   }
   commit_presented();
+  if (SUCCEEDED(hr) && hr != DXGI_STATUS_OCCLUDED) {
+    DXGI_FRAME_STATISTICS fs = {};
+    if (SUCCEEDED(chain->GetFrameStatistics(&fs)) && fs.PresentCount > 0) {
+      LARGE_INTEGER now_qpc, freq_qpc;
+      QueryPerformanceCounter(&now_qpc);
+      QueryPerformanceFrequency(&freq_qpc);
+      double period_ms = win_display_period_ms(freq_qpc.QuadPart);
+      present_dropped += win_count_dropped_step(rw->last_present_count, rw->last_sync_refresh,
+                                                rw->last_present_qpc, rw->has_frame_stats,
+                                                fs.PresentCount, fs.SyncRefreshCount,
+                                                now_qpc.QuadPart, freq_qpc.QuadPart, period_ms);
+      rw->last_present_count = fs.PresentCount;
+      rw->last_sync_refresh = fs.SyncRefreshCount;
+      rw->last_present_qpc = now_qpc.QuadPart;
+      rw->has_frame_stats = 1;
+    }
+  } else {
+    rw->has_frame_stats = 0;
+  }
   pace_owed = hr != DXGI_STATUS_OCCLUDED ? 1 : pace_owed ? pace_owed : 2;
   return SUCCEEDED(hr);
 }
@@ -3161,7 +3417,10 @@ int mb_screen_snapshot(void *hwnd, const wchar_t *path) {
   return ok;
 }
 
-// The GPU's time is not measured here.
-extern "C" double mb_host_gpu_ms(void) { return -1; }
-// Each frame drawn as it is made, on the window's thread: none dropped.
-extern "C" int32_t mb_host_frames_dropped(void) { return 0; }
+// The GPU's time for the last completed D3D11 frame (non-blocking timestamp query ring), in ms (-1: none yet).
+extern "C" double mb_host_gpu_ms(void) {
+  gpu_q_poll();
+  return last_gpu_ms;
+}
+// Frames dropped during continuous presentation (DXGI_FRAME_STATISTICS sync-refresh vs present-count delta).
+extern "C" int32_t mb_host_frames_dropped(void) { return present_dropped; }

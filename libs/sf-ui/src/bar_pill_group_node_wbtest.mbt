@@ -151,19 +151,21 @@ test "bar_pill_group_node interactive press drives GPU spot highlight, spring sc
       assert_true(rgb < 0x808080L, msg="light press ink rgb should be dark, got \{ink}")
     }
     let pill = pill_ref.val.unwrap()
-    let scope = pill.lent(pill_press_lent).unwrap()
-    assert_eq(scope.spot.untracked(), None)
+    let has_spot = fn() {
+      t.drawn_instances().iter().any(fn(a) { a.length() > 14 && a[5] == 6.0 && a[14] > 0.0 })
+    }
+    assert_eq(has_spot(), false)
     assert_true((pill.drawn_scale() - 1.0).abs() < 0.001)
     for target in [key_ref.val.unwrap(), ws_ref.val.unwrap()] {
       let (tx, ty, tw, th) = target.placed_window_now()
       let (cx, cy) = (tx + tw / 2.0, ty + th / 2.0)
       t.press_at(cx, cy)
       t.run_for(part_whole_ms)
-      assert_true(scope.spot.untracked() is Some(_), msg="spot must be active while pressed (dark=\{dark})")
+      assert_true(has_spot(), msg="spot must be active while pressed (dark=\{dark})")
       assert_true(pill.drawn_scale() > 1.01, msg="pill must spring-scale > 1.01 while pressed, got \{pill.drawn_scale()}")
       t.release(cx, cy)
       t.run_for(@ui.move_most_ms)
-      assert_eq(scope.spot.untracked(), None)
+      assert_eq(has_spot(), false)
       assert_true((pill.drawn_scale() - 1.0).abs() < 0.002, msg="pill must settle back to 1.0, got \{pill.drawn_scale()}")
     }
     t.assert_idle()

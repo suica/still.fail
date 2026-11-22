@@ -43,6 +43,7 @@ type Mirror = {
   notices: number;
   waiting: boolean;
   refill: boolean;
+  toolsRetry: boolean;
   startFailed: boolean;
   unread: [number, number, string][];
   identity: { model: string | null; effort: string | null; runtime: RuntimeKind } | null;
@@ -358,7 +359,8 @@ export class MbActor {
   #next = 0;
   /// Its runtime sessions, by the number the program knows each by.
   /// `heard`: how many requests its token had made of the station's tools as it was opened (none for one taken up).
-  readonly #agents = new Map<number, { generation: number; session: AgentSession; heard?: number }>();
+  /// `nudgeHeard`: how many requests its token had made when the previous undeclared turn ended (checked after a nudge).
+  readonly #agents = new Map<number, { generation: number; session: AgentSession; heard?: number; nudgeHeard?: number }>();
   #generation = 0;
   #closed = false;
   /// What is being read and formatted for it (`pendingAndFormat`): given up at once on a stop or a suspension.
@@ -382,7 +384,7 @@ export class MbActor {
     this.key = key;
     this.runtime = runtime;
     this.#deps = deps;
-    this.#mirror = { queued: 0, seen: 0, turn: null, warm: false, deferredEnd: false, codexUpdate: false, agent: null, idleSince: program.now(), notices: 0, waiting: false, refill: false, startFailed: false, unread: [], identity: null, runtime, closed: false };
+    this.#mirror = { queued: 0, seen: 0, turn: null, warm: false, deferredEnd: false, codexUpdate: false, agent: null, idleSince: program.now(), notices: 0, waiting: false, refill: false, toolsRetry: false, startFailed: false, unread: [], identity: null, runtime, closed: false };
     this.#post({ runtime });
   }
 
@@ -436,7 +438,7 @@ export class MbActor {
   }
 
   holdsState(): boolean {
-    return this.#mirror.codexUpdate || this.#mirror.notices > 0 || this.#mirror.waiting || this.#mirror.refill || this.#mirror.warm || this.#mirror.deferredEnd;
+    return this.#mirror.codexUpdate || this.#mirror.notices > 0 || this.#mirror.waiting || this.#mirror.refill || this.#mirror.toolsRetry || this.#mirror.warm || this.#mirror.deferredEnd;
   }
 
   unreadIn(thread: number, before: number): PendingMessage[] {
@@ -520,10 +522,11 @@ export class MbActor {
     const held = entry?.session ?? null;
     const deps = this.#deps;
     const toolsUnheard = entry?.heard !== undefined && this.runtime !== "codex" && deps.toolsHeard !== undefined && deps.toolsHeard(this.key) === entry.heard;
+    const nudgeUnheard = entry?.nudgeHeard !== undefined && deps.toolsHeard !== undefined && deps.toolsHeard(this.key) === entry.nudgeHeard;
     this.#closing();
     const agent = held?.snapshot() ?? null;
     held?.detach();
-    return { ...snap, agent, ...(toolsUnheard ? { toolsUnheard: true } : {}) } as Snapshot;
+    return { ...snap, agent, ...(toolsUnheard ? { toolsUnheard: true } : {}), ...(nudgeUnheard ? { nudgeUnheard: true } : {}) } as Snapshot;
   }
 
   /// Takes up `snap` with its runtime session `agent`; done once the program has. What the hub reads at once (its
@@ -547,8 +550,14 @@ export class MbActor {
       this.runtime = snap.runtime;
       const deps = this.#deps;
       const heard = snap?.toolsUnheard === true && this.runtime !== "codex" && deps.toolsHeard !== undefined ? deps.toolsHeard(this.key) : undefined;
+      const nudgeHeard = snap?.nudgeUnheard === true && deps.toolsHeard !== undefined ? deps.toolsHeard(this.key) : undefined;
       const handle = ++this.#next;
-      this.#agents.set(handle, { generation: this.#generation, session: agent, ...(heard === undefined ? {} : { heard }) });
+      this.#agents.set(handle, {
+        generation: this.#generation,
+        session: agent,
+        ...(heard === undefined ? {} : { heard }),
+        ...(nudgeHeard === undefined ? {} : { nudgeHeard }),
+      });
       taken = { handle, generation: this.#generation };
       this.#mirror = {
         ...this.#mirror,
@@ -857,9 +866,20 @@ export class MbActor {
       // (not even to list them: its MCP connection failed as it opened, 2026-11-19 with the station out of file
       // handles), is one that lost them: why, else null. Not a Codex app-server's, shared by sessions and opened before.
       case "toolsUnheard": {
-        const heard = this.#agents.get(args[0])?.heard;
-        if (heard === undefined || this.runtime === "codex" || deps.toolsHeard === undefined) return null;
-        return deps.toolsHeard(this.key) === heard ? "its process never reached the station's tools" : null;
+        if (deps.toolsHeard === undefined) return null;
+        const [handle, nudged] = args;
+        const entry = this.#agents.get(handle);
+        if (!entry) return null;
+        const cur = deps.toolsHeard(this.key);
+        if (entry.heard !== undefined && this.runtime !== "codex" && cur === entry.heard) {
+          return "its process never reached the station's tools";
+        }
+        if (nudged === true && entry.nudgeHeard !== undefined && cur === entry.nudgeHeard) {
+          entry.nudgeHeard = undefined;
+          return "its process made no tool requests even after being nudged";
+        }
+        entry.nudgeHeard = cur;
+        return null;
       }
       case "outlived": {
         const session = this.#agents.get(args[0])?.session;

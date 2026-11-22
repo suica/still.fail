@@ -251,7 +251,7 @@ export type Snapshot = {
   agent: unknown | null;
   turn: { id: string; authRetried: boolean; codexRetried?: boolean; by: TurnFor; declared: string | null; wait: number | null } | null;
   /// Undeclared turn end deferred while the session was held (optional: a station from before does not say).
-  deferredEnd?: { lost: boolean; recorded: string | null } | null;
+  deferredEnd?: { lost: boolean; unheard?: boolean; recorded: string | null } | null;
   workingFor: Working[];
   notices: string[];
   waitingMs: number | null;
@@ -272,6 +272,12 @@ export type Snapshot = {
   compacting?: boolean;
   /// Its process had not yet reached the station's tools as it was handed over (optional: a station from before does not say).
   toolsUnheard?: boolean;
+  /// Its process made no tool requests before being nudged as it was handed over (optional: a station from before does not say).
+  nudgeUnheard?: boolean;
+  /// How many tools-lost restarts have already been attempted in this recovery sequence (optional: a station from before does not say).
+  toolsRestarts?: number;
+  /// Remaining backoff before a deferred toolsUnheard restart fires (optional: a station from before does not say).
+  toolsRetryMs?: number | null;
   identity?: { model: string | null; effort: string | null; runtime: RuntimeKind } | null;
 };
 

@@ -30,41 +30,9 @@ pub fn Stops::reset(self : Stops) -> Unit {
 }
 
 ///|
-/// How far toward a finger its thumb leans from the stop it is drawn to (the bar's ball's `lean`).
-let stops_lean : Double = 0.25
-
-///|
-/// How much larger its thumb is held, and its lens over that (the bar's ball's 6%, its lens's 18%).
-let stops_held_grow : Double = 0.06
-
-///|
-/// Its thumb at rest, a lifted capsule; and a capsule's room alone, its lens's.
-// kept across runs: a value (no field of it changes)
-let stops_ball : @ui.Style = @ui.css("radius=Full bg=Lifted")
-
-///|
-// kept across runs: a value (no field of it changes)
-let stops_ball_room : @ui.Style = @ui.css("radius=Full")
-
-///|
-/// A stop's dot: 4 across, the ink at 30% on the track's tint.
-// kept across runs: a value (no field of it changes)
-let stops_dot : @ui.Style = @ui.css("w=S1 h=S1 radius=Full bg=A(Fg,O30)")
-
-///|
-/// Its name over its thumb: in the thumb's middle.
-// kept across runs: a value (no field of it changes)
-let stops_name : @ui.Style = @ui.css("row align=ACenter justify=JCenter")
-
-///|
 /// Its track: a capsule on the words' tint, its stops in a line across it, 4 in.
 // kept across runs: a value (no field of it changes)
 let stops_track : @ui.Style = @ui.css("row w=Full p=S1 radius=Full bg=Tint")
-
-///|
-/// The name of the level it is at.
-// kept across runs: a value (no field of it changes)
-let stops_words : @ui.TextStyle = @ui.text_style(size=Ui, weight=Medium, color=Fg, wrap=false)
 
 ///|
 /// How wide a node's words `s` are on one line at `size` and `weight`: in the theme the window's tree's words are drawn in (@ui.tree_theme, view_host's

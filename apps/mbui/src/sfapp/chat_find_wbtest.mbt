@@ -1389,3 +1389,29 @@ test "小屏: 在对话中查找 from the chat's sheet: the find's bar in the ch
   assert_eq(@sfpages.find_words_in(key), [])
   assert_true(app.nav.top() is Chat(_))
 }
+
+///|
+test "⌘F find_bar_node: single-layer liquid glass capsule when open, zero hidden glass after close, and MBUI_GLASS=solid degradation" {
+  for solid in [false, true] {
+    let calls : Array[Made] = []
+    let t = find_chat_tester(calls)
+    @ui.set_glass_solid(if solid { Some(true) } else { None })
+    t.draw()
+    t.key(@ui.key_of_char('f'), mods=@ui.mod_cmd)
+    t.run_for(@ui.move_most_ms)
+    let close_rect = t.get(Button, label=@sf.t("web-main.find.close")).rect
+    let cx = close_rect.0 + close_rect.2 / 2.0
+    let cy = close_rect.1 + close_rect.3 / 2.0
+    let find_glass = t
+      .drawn_glass()
+      .filter(fn(g) { g.4 == 6 && cx >= g.0 && cx <= g.0 + g.2 && cy >= g.1 && cy <= g.1 + g.3 })
+    assert_eq(find_glass.length(), if solid { 0 } else { 1 }, msg="find open solid=\{solid}")
+    t.key(@ui.key_escape)
+    t.run_for(@ui.move_most_ms)
+    let after_glass = t
+      .drawn_glass()
+      .filter(fn(g) { g.4 == 6 && cx >= g.0 && cx <= g.0 + g.2 && cy >= g.1 && cy <= g.1 + g.3 && (g.3 - 32.0).abs() < 1.0 })
+    assert_eq(after_glass.length(), 0, msg="find closed hidden glass solid=\{solid}")
+  }
+  @ui.set_glass_solid(None)
+}

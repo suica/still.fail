@@ -182,6 +182,8 @@ extern "C" fn ffi_cpu_ms() -> Double = "mb_host_cpu_ms"
 
 extern "C" fn ffi_thread_cpu_ms() -> Double = "mb_host_thread_cpu_ms"
 
+extern "C" fn ffi_display_hz() -> Double = "mb_host_display_hz"
+
 extern "C" fn ffi_perf_state() -> Int = "mb_host_perf_state"
 
 extern "C" fn ffi_set_perf(on : Int) -> Unit = "mb_host_set_perf"
@@ -947,6 +949,11 @@ fn cpu_ms() -> Double {
 ///|
 fn thread_cpu_ms() -> Double {
   ffi_thread_cpu_ms()
+}
+
+///|
+fn display_hz() -> Double {
+  ffi_display_hz()
 }
 
 ///|

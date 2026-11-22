@@ -1269,6 +1269,91 @@ int main(void) {
     CHECK(r[0][0] <= 0 && r[0][0] + r[0][2] >= 84 && r[0][0] + r[0][2] < 150);
   }
 
+  // Perf-29: (1) Stacked glass cache independence (top progressive blur + top liquid glass capsule + changing bottom
+  // content must produce 0 blur rebuilds, while changing content under top progressive blur rebuilds both identically
+  // to a fresh render); (2) GLES async PBO+fence same-side early stop within 4 frames; (3) progressive blur visible-box
+  // scissor & ramp boundary fast-path pixel equivalence.
+  {
+    double sg[5 * MB_INST];
+    // 0: full background
+    rect_at(sg, 0, 0, W, H, 0, 0.94, 0.94, 0.92, 0);
+    // 1: top content under progressive blur
+    rect_at(sg + 1 * MB_INST, 10, 4, 40, 10, 0, 0.85, 0.20, 0.20, 0);
+    // 2: bottom unrelated content (far below top glass & its blur margin)
+    rect_at(sg + 2 * MB_INST, 10, 62, 60, 10, 0, 0.20, 0.45, 0.90, 0);
+    // 3: top progressive frosted blur (kind 5, a[22] = -1, fade y from 14..22)
+    rect_at(sg + 3 * MB_INST, 0, 0, W, 22, 5, 0.96, 0.96, 0.96, -30);
+    sg[3 * MB_INST + 6] = 1.1;
+    sg[3 * MB_INST + 7] = 4.0;
+    sg[3 * MB_INST + 11] = 0.35;
+    sg[3 * MB_INST + 15] = 1.0;
+    sg[3 * MB_INST + 22] = -1.0;
+    sg[3 * MB_INST + 54] = 22.0;  // fade bottom end
+    sg[3 * MB_INST + 55] = 8.0;   // fade bottom length (y=0..14 full ramp=1, 14..22 ramp->0)
+    // 4: top liquid glass capsule stacked over the progressive blur
+    rect_at(sg + 4 * MB_INST, 12, 4, 44, 12, 6, 0.99, 0.99, 0.99, -31);
+    sg[4 * MB_INST + 4] = 6.0;
+    sg[4 * MB_INST + 6] = 1.0;
+    sg[4 * MB_INST + 7] = 2.0;
+    sg[4 * MB_INST + 11] = 0x67 / 255.0;
+    sg[4 * MB_INST + 13] = 8.0;
+    sg[4 * MB_INST + 14] = -1.0;
+    sg[4 * MB_INST + 15] = 1.0;
+    sg[4 * MB_INST + 21] = 4.0;
+
+    glass_forget();
+    gl_set_fixed_dt(1.0 / 60.0);
+    made = blurs_made;
+    gl_present(sg, 5, 0.94, 0.94, 0.92);
+    CHECK(blurs_made == made + 2);
+    CHECK(surface_as_fresh(surface));
+
+    // Mutate bottom unrelated rect across 3 frames: neither top progressive nor stacked liquid glass may re-blur.
+    for (int step = 0; step < 3; step++) {
+      sg[2 * MB_INST + 8] = 0.20 + 0.25 * (step + 1);
+      made = blurs_made;
+      gl_present(sg, 5, 0.94, 0.94, 0.92);
+      CHECK(blurs_made == made);
+      CHECK(surface_as_fresh(surface));
+    }
+
+    // Mutate content under the top progressive blur: both top progressive and stacked liquid glass must re-blur.
+    sg[1 * MB_INST + 9] = 0.80;
+    made = blurs_made;
+    gl_present(sg, 5, 0.94, 0.94, 0.92);
+    CHECK(blurs_made == made + 2);
+    CHECK(surface_as_fresh(surface));
+
+    // GLES async PBO+fence same-side early stop: light->light (0.94 -> 0.92) stops settling within 4 frames.
+    double es[3 * MB_INST];
+    rect_at(es, 0, 0, W, H, 0, 0.95, 0.95, 0.95, 0);
+    rect_at(es + MB_INST, 8, 28, 84, 16, 6, 253.0 / 255.0, 252.0 / 255.0, 253.0 / 255.0, -32);
+    es[MB_INST + 4] = 8.0;
+    es[MB_INST + 6] = 1.0;
+    es[MB_INST + 7] = 2.0;
+    es[MB_INST + 11] = 0x67 / 255.0;
+    es[MB_INST + 13] = 8.0;
+    es[MB_INST + 14] = -1.0;
+    es[MB_INST + 15] = 1.0;
+    rect_at(es + 2 * MB_INST, 16, 30, 20, 12, 10, 0.11, 0.11, 0.11, 0);
+    es[2 * MB_INST + 4] = 3.0;
+    es[2 * MB_INST + 12] = 0.1; es[2 * MB_INST + 13] = 0.5;
+    es[2 * MB_INST + 14] = 0.9; es[2 * MB_INST + 15] = 0.5;
+    es[2 * MB_INST + 21] = 50.0; es[2 * MB_INST + 22] = 36.0; es[2 * MB_INST + 23] = 16.0;
+    glass_forget();
+    gl_present(es, 3, 0.95, 0.95, 0.95);
+    CHECK(gl_adaptive_settling() == 0);
+    es[8] = 0.93; es[9] = 0.93; es[10] = 0.93;
+    gl_present(es, 3, 0.93, 0.93, 0.93);
+    CHECK(gl_adaptive_settling() == 1);
+    for (int s = 0; s < 4 && gl_adaptive_settling(); s++) {
+      gl_present(es, 3, 0.93, 0.93, 0.93);
+    }
+    CHECK(gl_adaptive_settling() == 0);
+    gl_set_fixed_dt(0.0);
+    glass_forget();
+  }
+
   if (!failed) printf("gles_render: ok\n");
   return failed;
 }

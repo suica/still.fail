@@ -1,38 +1,13 @@
 // Single-layer iOS 26 / macOS 26 floating liquid glass pill container for top bar action button groups:
-// uses `glass_bar_pill(spot~)` (40% translucent iOS 27 optical liquid glass matching `glass_tab_bar()`),
-// tight outside-only `glass_control_shadow()` (`shadow_outside(Is(true))` so shadows stay crisp and never bleed inside glass or onto adjacent pills),
-// native `.glassEffect(.interactive())` press response (`spot` specular highlight + `@motion.backdrop_press_spring` bounce),
-// `MBUI_GLASS=solid` hairline `panel_edge()` fallback, and automatic concentric corner scope (`corner_card_node`).
+// delegates neutral pills to `@lg.liquid_pill_group_node` & `@lg.bind_pill_press`, adding sf-ui's calibrated
+// outside-only `glass_control_shadow()`, `MBUI_GLASS=solid` hairline `panel_edge()` fallback, and automatic
+// concentric corner scope (`corner_card_node`). Tinted pills (`bar_pill_group_with` with `tint=Some(...)`,
+// `window_keys_node`) and vertical `float_pill_group_node` share the package-local `PillPressScope` / `pill_press_lent`.
 
 ///|
-/// Translucent liquid glass for floating top bar action pills (`36–40pt` tall): matches `glass_tab_bar()`'s
-/// iOS 27 40% tint (`0x20202067L` / `0xFDFCFD67L`) with bevel/refraction tuned for top bar capsules and
-/// live `spot` specular highlight on press. `tint`: a pill told apart from the neutral ones beside it (the window's own
-/// buttons'), its glass that colour and its solid ground the panel's with a quarter of it over.
-fn glass_bar_pill(spot? : (Double, Double)? = None, tint? : Int64? = None) -> @ui.Glass {
-  let t = theme()
-  let (glass_tint, solid) = match tint {
-    Some(c) => (c, over(panel_ground(), alpha(c, 0.24)))
-    None => (if t.dark { 0x20202067L } else { 0xFDFCFD67L }, panel_ground())
-  }
-  @ui.Glass::liquid(
-    blur=2.5,
-    tint=glass_tint,
-    solid~,
-    saturation=1.0,
-    rim=0.6,
-    bezel=14.0,
-    refraction=20.0,
-    chroma=0.0,
-    merge=0.0,
-    adaptive=false,
-    spot~,
-  ).sharing()
-}
-
-///|
-/// Shared press-feedback scope lent by `bar_pill_group_node` to its interactive children (`round_key_node`,
-/// `icon_button_node`, and custom pill actions via `bind_pill_press` / `bar_pill_key_press_node`).
+/// Shared press-feedback scope lent by tinted `bar_pill_group_with` (`window_keys_node`) and vertical
+/// `float_pill_group_node` to their interactive children (neutral horizontal `bar_pill_group_node` / `pick_bar_node`
+/// delegate to `@lg.liquid_pill_group_node`).
 priv struct PillPressScope {
   pill : @view.View
   spot : @signals.Signal[(Double, Double)?]
@@ -44,17 +19,18 @@ priv struct PillPressScope {
 let pill_press_lent : @view.Lent[PillPressScope] = @view.Lent::new()
 
 ///|
-/// Theme-adaptive press overlay ink for controls inside a liquid glass top bar pill: bright white glow in Dark
-/// mode and soft dark veil in Light mode so touch and mouse presses stay clearly visible over translucent glass.
+/// Theme-adaptive press overlay ink for controls inside a liquid glass top bar pill: delegates to `@lg.liquid_pill_press_ink()`.
 pub fn bar_pill_press_ink() -> Int64 {
-  alpha(theme().p.text, if theme().dark { 0.22 } else { 0.12 })
+  @lg.liquid_pill_press_ink()
 }
 
 ///|
-/// Connects an interactive child control inside `bar_pill_group_node` to its enclosing liquid glass pill's
-/// `.glassEffect(.interactive())` response: moves the GPU `spot` specular highlight to the child's center and
-/// springs the pill scale via `@motion.backdrop_press_spring`. No-op outside a `bar_pill_group_node`.
+/// Connects an interactive child control inside `bar_pill_group_node`, `bar_pill_group_with`, or
+/// `float_pill_group_node` to its enclosing liquid glass pill's `.glassEffect(.interactive())` response: moves the
+/// GPU `spot` specular highlight to the child's center and springs the pill scale via `@motion.backdrop_press_spring`.
+/// No-op outside a pill group.
 pub fn bind_pill_press(child : @view.View) -> Unit {
+  @lg.bind_pill_press(child)
   bind_pill_press_by(child, fn() { child.pressed() })
 }
 
@@ -127,11 +103,27 @@ pub fn bar_pill_group_node(
   gap? : Double = 2.0,
   loc~ : SourceLoc,
 ) -> @view.View {
-  bar_pill_group_with(loc~, parent, body, height~, pad~, gap~)
+  let g = @lg.liquid_pill_group_node(
+    parent,
+    height~,
+    pad~,
+    gap~,
+    solid=panel_ground,
+    fn(g) {
+      corner_card_node(g, fn() { height / 2.0 }, inset=fn() { pad })
+      body(g)
+    },
+    loc~,
+  )
+  g
+  .edge(By(fn() { if g.glass_solid() { (control_edge_w, panel_edge()) } else { (0.0, 0L) } }))
+  .shadow(By(fn() { glass_control_shadow() }))
+  |> ignore
+  g
 }
 
 ///|
-/// bar_pill_group_node's pill, its glass `tint()` where said (glass_bar_pill's `tint`), else the neutral one.
+/// bar_pill_group_node's pill, its glass `tint()` where said (`window_keys_node`), else delegates to neutral `bar_pill_group_node`.
 #callsite(autofill(loc))
 fn bar_pill_group_with(
   parent : @view.View,
@@ -142,28 +134,35 @@ fn bar_pill_group_with(
   tint? : (() -> Int64)? = None,
   loc~ : SourceLoc,
 ) -> @view.View {
-  parent.box(made_for=loc, fn(g) {
-    let r = height / 2.0
-    let spot_sig : @signals.Signal[(Double, Double)?] = @signals.signal(None)
-    let press_way = @motion.NodeWay::new(0.0)
-    let scope : PillPressScope = { pill: g, spot: spot_sig, press_way, count: 0 }
-    g
-    .row(Is(true))
-    .height(Is(Some(height)))
-    .radius(Is(r))
-    .padding(Is((pad, pad, pad, pad)))
-    .gap(Is(gap))
-    .lines_up(Is(Some(Middle)))
-    .shrink(Is(0.0))
-    .glass(By(fn() { Some(glass_bar_pill(spot=spot_sig.get(), tint=tint.map(fn(f) { f() }))) }))
-    .scale(By(fn() { 1.0 + 0.05 * press_way.shown(g) }), about=At(0.5, 0.5))
-    .edge(By(fn() { if g.glass_solid() { (control_edge_w, panel_edge()) } else { (0.0, 0L) } }))
-    .shadow(By(fn() { glass_control_shadow() }))
-    .shadow_outside(Is(true))
-    .clips(Is(true))
-    .lends(pill_press_lent, scope)
-    |> ignore
-    corner_card_node(g, fn() { r }, inset=fn() { pad })
-    body(g)
-  })
+  match tint {
+    None => bar_pill_group_node(loc~, parent, body, height~, pad~, gap~)
+    Some(tint_fn) =>
+      parent.box(made_for=loc, fn(g) {
+        let r = height / 2.0
+        let spot_sig : @signals.Signal[(Double, Double)?] = @signals.signal(None)
+        let press_way = @motion.NodeWay::new(0.0)
+        let scope : PillPressScope = { pill: g, spot: spot_sig, press_way, count: 0 }
+        g
+        .row(Is(true))
+        .height(Is(Some(height)))
+        .radius(Is(r))
+        .padding(Is((pad, pad, pad, pad)))
+        .gap(Is(gap))
+        .lines_up(Is(Some(Middle)))
+        .shrink(Is(0.0))
+        .glass(By(fn() {
+          let c = tint_fn()
+          Some({ ..@lg.liquid_bar_pill_glass(spot=spot_sig.get()), tint: c, solid: over(panel_ground(), alpha(c, 0.24)) })
+        }))
+        .scale(By(fn() { 1.0 + 0.05 * press_way.shown(g) }), about=At(0.5, 0.5))
+        .edge(By(fn() { if g.glass_solid() { (control_edge_w, panel_edge()) } else { (0.0, 0L) } }))
+        .shadow(By(fn() { glass_control_shadow() }))
+        .shadow_outside(Is(true))
+        .clips(Is(true))
+        .lends(pill_press_lent, scope)
+        |> ignore
+        corner_card_node(g, fn() { r }, inset=fn() { pad })
+        body(g)
+      })
+  }
 }

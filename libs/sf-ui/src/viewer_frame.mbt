@@ -71,25 +71,41 @@ pub fn viewer_frame_act_node(
     room.over(Is(true)) |> ignore
     room.pick(fn() { layout(width()) is Small }, fn(p, small) {
       if small {
-        // (the window's whole, the band at its foot)
+        // (the window's whole, floating liquid glass action pill over a soft bottom scroll-edge)
         p.over(Is(true)).lies_along(Is(End)) |> ignore
+        let foot_h = fn(_ : @view.View) { vfr_act_in * 2.0 + button_height() + (viewer_host().room)().1 + 12.0 }
+        @lg.liquid_scroll_edge_node(p, foot_h, foot_h, side=Bottom, bg=fn() { ink().ground }, shield=false) |> ignore
         p.box(fn(band) {
+          let pill_pad = 4.0
           band
           .fills_across(Is(true))
-          .glass(By(fn() { Some(glass_foot()) }))
           .padding(By(fn() {
             // (a long button keeps its shape and stands past a rounded window's corner where the foot has not brought
-            // it past it already: viewer_frame_act's)
-            let bottom = vfr_act_in + (viewer_host().room)().1
-            let left = vfr_act_side_at(@ui.window_corner_at(3), bottom)
-            let right = vfr_act_side_at(@ui.window_corner_at(2), bottom)
-            (left, vfr_act_in, right, bottom)
+            // it past it already: viewer_frame_act's; subtract pill_pad so inner buttons keep full width)
+            let bottom = dmax(0.0, vfr_act_in - pill_pad) + (viewer_host().room)().1
+            let left = dmax(0.0, vfr_act_side_at(@ui.window_corner_at(3), bottom + pill_pad) - pill_pad)
+            let right = dmax(0.0, vfr_act_side_at(@ui.window_corner_at(2), bottom + pill_pad) - pill_pad)
+            (left, dmax(0.0, vfr_act_in - pill_pad), right, bottom)
           }))
           |> ignore
           band.box(fn(row) {
+            let outer_r = fn() { (button_height() + 2.0 * pill_pad) / 2.0 }
             // (its buttons' ends giving way alike where the row is too narrow for them all, never their words:
             // button_node's ends_give_lent)
-            row.row(Is(true)).lines_up(Is(Some(Middle))).gap(Is(@ui.Space::px(S2))).lends(ends_give_lent, true) |> ignore
+            row
+            .row(Is(true))
+            .lines_up(Is(Some(Middle)))
+            .gap(Is(@ui.Space::px(S2)))
+            .padding(Is((pill_pad, pill_pad, pill_pad, pill_pad)))
+            .radius(By(outer_r))
+            .glass(By(fn() { Some(@lg.liquid_bar_pill_glass(solid=panel_ground(), sharing=true)) }))
+            .edge(By(fn() { if row.glass_solid() { @lg.liquid_solid_edge() } else { (0.0, 0L) } }))
+            .shadow(By(fn() { glass_control_shadow() }))
+            .shadow_outside(Is(true))
+            .clips(Is(true))
+            .lends(ends_give_lent, true)
+            |> ignore
+            corner_card_node(row, outer_r, inset=fn() { pill_pad })
             // (with a copying beside it, 取消 and it as wide as their words, the doing the rest: viewer_frame_act's.
             // Without, 取消 and the doing each half while both fit. The doing never narrower than its words and ends
             // need, nor 取消 beside it alone, as a sheet's foot's two (button_node's foot_fills_lent): what is beside it
@@ -192,7 +208,7 @@ fn vfr_act_side_at(corner : Double, bottom : Double) -> Double {
 /// Liquid glass for floating viewer capsules (`viewer_head_node`, `viz_page`): neutral single-layer iOS 27 liquid
 /// glass over the viewer's canvas.
 pub fn viewer_page_glass() -> @ui.Glass {
-  { ..glass_viewer_clear(), solid: theme().p.canvas }
+  @lg.liquid_viewer_clear_glass(solid=theme().p.canvas)
 }
 
 ///|

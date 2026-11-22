@@ -54,6 +54,21 @@ test "a newer build: handed to the host at once to be made ready, nothing over H
 }
 
 ///|
+test "the combined updates list says each downloaded version once and keeps the ready action" {
+  let newer = release([])
+  if newer is Object(o) {
+    o["versionName"] = Json::string("0.1.11013")
+  }
+  let t = updates_tester(newer, [])
+  t.frame()
+  update_version.val = 11005
+  t.tells_update("{\"phase\":\"ready\",\"percent\":-1,\"error\":\"\",\"file\":\"stillfail-2.apk\",\"away\":false}")
+  assert_eq(@sfbase.update_as_row(), Some(("0.1.11005 → 0.1.11013 已下载", None, "重启更新")))
+  t.tells_update("{\"phase\":\"ready\",\"percent\":-1,\"error\":\"\",\"file\":\"stillfail-2.apk\",\"away\":true}")
+  assert_eq(@sfbase.update_as_row(), Some(("0.1.11005 → 0.1.11013 已下载，将自动安装", None, "")))
+}
+
+///|
 test "a newer build with a delta from this build: the delta handed to the host beside it, its size said as what comes; one without, none" {
   let sha = "1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef"
   let with_delta : Json = {

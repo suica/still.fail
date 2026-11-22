@@ -395,3 +395,24 @@ test "with a mouse too, the sidebar's list starts past its search; scrolled up i
   assert_true(!@sfpages.search_opened())
   assert_eq(t.audit().filter(fn(f) { f.contains("sfpages/search.mbt") }), [])
 }
+
+///|
+test "小屏: tucked home search emits zero hidden glass, pulled-down search and open search bar emit single-layer liquid glass, and MBUI_GLASS=solid degrades cleanly" {
+  for solid in [false, true] {
+    let t = tester("home")
+    @ui.set_glass_solid(if solid { Some(true) } else { None })
+    t.draw()
+    let tucked_glass = t.drawn_glass().filter(fn(g) { g.4 == 6 }).length()
+    // Pull list down to reveal search capsule
+    list_up_to_top(t)
+    t.draw()
+    let revealed_glass = t.drawn_glass().filter(fn(g) { g.4 == 6 }).length()
+    assert_eq(revealed_glass - tucked_glass, if solid { 0 } else { 1 }, msg="revealed search glass solid=\{solid}")
+    // Open search page: top search capsule is single-layer liquid glass (zero glass-on-glass)
+    t.tap_text("搜索全部内容")
+    t.run_for(@ui.move_most_ms)
+    let page_glass = t.drawn_glass().filter(fn(g) { g.4 == 6 })
+    assert_eq(page_glass.length(), if solid { 0 } else { 1 }, msg="search page glass solid=\{solid}")
+  }
+  @ui.set_glass_solid(None)
+}

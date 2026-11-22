@@ -1852,148 +1852,48 @@ pub fn switch_node(
   loc~ : SourceLoc,
 ) -> Unit {
   parent.box(made_for=loc, fn(at) {
-    at.lines_up(Is(Some(Start))) |> ignore
-    // (its press's room: as wide as a press's least room where it is drawn narrower, reached from round it as the old
-    // view's press_room has a small target's, laid out as wide as it is drawn: what is by it moves none. That room is
-    // what it is to the hand, the keys and a screen reader: mbui's headless toggle, a switch by its name, on or off,
-    // taking no press nor the focus while disabled; a light tick felt under a finger as it is turned)
+    let (sw_w, sw_h) = @signals.untracked(fn() {
+      if !small && native_input() is Finger {
+        // Give labels more room on compact touch windows while retaining the capsule.
+        let win_w = at.window_w()
+        let eff_w = if win_w > 0.0 { win_w } else { 390.0 }
+        let extra = dclamp(eff_w - 360.0, 0.0, 12.0)
+        (52.0 + extra, 28.0)
+      } else {
+        switch_size(small)
+      }
+    })
+    let out = fn() { dmax(0.0, (theme().items.least - sw_w) / 2.0) }
+    at
+    .row(Is(true))
+    .min_height(By(fn() { Some(theme().items.least) }))
+    .lines_up(Is(Some(Middle)))
+    .padding(By(fn() { (out(), 0.0, out(), 0.0) }))
+    .margin(By(fn() { (-out(), 0.0, -out(), 0.0) }))
+    |> ignore
     let felt = fn(to : Bool) {
       if @ui.pointing() is Finger {
         @ui.haptic(TextHandleMove)
       }
       turn(to)
     }
-    @headless.toggle(
+    @lg.liquid_toggle_node(
       at,
-      Switch,
-      label,
       on,
       felt,
+      label,
       disabled~,
-      hold_press=(@ui.touch_slop(), @ui.long_press_ms),
-      fn(room, sw) {
-    let size = fn() {
-      if !small && native_input() is Finger {
-        // Give labels more room on compact touch windows while retaining the capsule.
-        let extra = dclamp(at.window_w() - 360.0, 0.0, 12.0)
-        (52.0 + extra, 28.0)
-      } else {
-        switch_size(small)
-      }
-    }
-    let out = fn() { dmax(0.0, (theme().items.least - size().0) / 2.0) }
-    room.padding(By(fn() { (out(), 0.0, out(), 0.0) })).margin(By(fn() { (-out(), 0.0, -out(), 0.0) })) |> ignore
-    room.box(fn(v) {
-      // (its track in the middle of that room, up and down: switch_reach's)
-      v.min_height(By(fn() { Some(theme().items.least) })).row(Is(true)).lines_up(Is(Some(Middle))) |> ignore
-      let knob = @motion.NodeWay::new(if @signals.untracked(on) { 1.0 } else { 0.0 })
-      let held = @motion.NodeWay::new(0.0)
-      let scale_x = @motion.NodeWay::new(1.0)
-      let scale_y = @motion.NodeWay::new(1.0)
-      // (sent to its side by a crisp spring from where it is then and as fast: a turn told again mid-way goes on from
-      // there, never from a stop; still within switch_settle_ms)
-      v.reacts(on, fn(now) { knob.go(v, if now { 1.0 } else { 0.0 }, @motion.knob_spring) })
-      v.reacts(fn() { sw.pressed() && @ui.pointing() is Finger }, fn(down) {
-        held.go(v, if down { 1.0 } else { 0.0 }, @motion.backdrop_press_spring)
-        scale_x.go(v, if down { 1.5 } else { 1.0 }, @motion.backdrop_scale_x_spring)
-        scale_y.go(v, if down { 1.5 } else { 1.0 }, @motion.backdrop_scale_y_spring)
-      })
-      v.alpha(By(fn() { if disabled() { switch_disabled_alpha } else { 1.0 } })) |> ignore
-      v.box(fn(track) {
-        track
-        .width(By(fn() { Some(size().0) }))
-        .height(By(fn() { Some(size().1) }))
-        .radius(By(fn() { size().1 / 2.0 }))
-        .ground(By(fn() {
-          let p = theme().p
-          @ui.blend(track_glass_ink(), p.accent, dclamp(knob.shown(track), 0.0, 1.0))
-        }))
-        |> ignore
-        let d = fn() { size().1 - 2.0 * switch_in }
-        // LiquidToggle is 64×28 with a 40×24 thumb. Scale the proportions in compact locations.
-        let thumb_w = fn() { size().0 * 40.0 / 64.0 }
-        let travel = fn() { size().0 - 2.0 * switch_in - thumb_w() }
-        // (from its start on: the window's tree lays its rows out from the left, its knob's way along the track the same)
-        let k = fn() { knob.shown(track) }
-        // (held, the knob a lens: wider and larger about its middle, the knob fading under it)
-        let lens = fn() { if track.glass_solid() { 0.0 } else { held.shown(track) } }
-        track.box(fn(o) {
-          o.over(Is(true)).lines_up(Is(Some(Start))) |> ignore
-          o.box(fn(kn) {
-            kn
-            .width(By(fn() { Some(thumb_w()) }))
-            .height(By(fn() { Some(d()) }))
-            .radius(By(fn() { d() / 2.0 }))
-            .ground(Is(0xFFFFFFFFL))
-            .shadow(Is((4.0, 4.0 / 6.0, 0x0000000DL)))
-            .offset(By(fn() { (switch_in + travel() * k(), switch_in) }))
-            // Stretch the capsule along its way in proportion to its speed, except while it is drawn as a lens.
-            .ground_drawn(By(fn() {
-              let (_, speed) = knob.motion(track)
-              let calm = 1.0 - dmin(1.0, dmax(lens(), 0.0))
-              @motion.velocity_capsule(thumb_w(), d(), speed * travel() * calm, 0.0)
-            }))
-            .alpha(By(fn() { 1.0 - dclamp(lens(), 0.0, 1.0) }))
-            |> ignore
-          })
-          |> ignore
-        })
-        |> ignore
-        track.show(fn() { lens() > 0.0 }, fn(o) {
-          o.over(Is(true)).lines_up(Is(Some(Start))) |> ignore
-          o.box(fn(l) {
-            l
-            .width(By(fn() { Some(thumb_w()) }))
-            .height(By(fn() { Some(d()) }))
-            .radius(By(fn() { d() / 2.0 }))
-            .glass(By(fn() { Some(glass_toggle_lens(lens())) }))
-            .alpha(By(fn() { dclamp(lens(), 0.0, 1.0) }))
-            .shadow(Is((4.0, 4.0 / 6.0, 0x0000000DL)))
-            .shadow_outside(Is(true))
-            .offset(By(fn() { (switch_in + travel() * k(), switch_in) }))
-            .ground_drawn(By(fn() {
-              let w = thumb_w()
-              let h = d()
-              let lw = w * scale_x.shown(l)
-              let lh = h * scale_y.shown(l)
-              {
-                dx: (w - lw) / 2.0,
-                dy: (h - lh) / 2.0,
-                dw: lw - w,
-                dh: lh - h,
-                corners: Some((lh / 2.0, lh / 2.0, lh / 2.0, lh / 2.0)),
-              }
-            }))
-            |> ignore
-          })
-          |> ignore
-        })
-        // (the keyboard's focus on it: a ring round it, its gap and width the theme's)
-        track.show(fn() { sw.focus_shown() }, fn(ring) {
-          let out = fn() {
-            let t = @ui.tree_theme()
-            t.focus_gap + t.focus_w
-          }
-          ring
-          .over(Is(true))
-          .margin(By(fn() { (-out(), -out(), -out(), -out()) }))
-          .radius(By(fn() { size().1 / 2.0 + out() }))
-          .edge(By(fn() { (@ui.tree_theme().focus_w, @ui.tree_theme().focus) }))
-          |> ignore
-        })
-      })
-      |> ignore
-    })
-    |> ignore
-    })
+      width=sw_w,
+      height=sw_h,
+      track_color=track_glass_ink,
+      on_color=fn() { theme().p.accent },
+      finger_only_lens=true,
+      loc~,
+    )
     |> ignore
   })
   |> ignore
 }
-
-///|
-/// How far a disabled switch is seen (@kit.switch_look_of's `opacity`).
-let switch_disabled_alpha : Double = 0.5
 
 ///|
 /// A row on a group's card that turns something on or off (switch_row's; narrow, in a card: its title, `note` quieter

@@ -50,17 +50,6 @@ pub fn viewer_bar_node(
     room.reacts(hidden, fn(off) { gone.go_ms(room, if off { 1.0 } else { 0.0 }, viewer_bar_ms) })
     let b = room.box(fn(b) {
       b
-      .glass(By(fn() {
-        let k = ink()
-        Some(
-          @ui.Glass::frosted(
-            blur=viewer_bar_blur,
-            tint=alpha(k.ground, viewer_bar_share),
-            solid=k.ground,
-            saturation=viewer_bar_saturation,
-          ),
-        )
-      }))
       .alpha(By(fn() { (1.0 - gone.shown(b)) * shown(b) }))
       .offset(By(fn() { (0.0, -(viewer_bar_h + top()) * gone.shown(b)) }))
       // (gone or going, it takes no press: what is under it does)
@@ -68,6 +57,23 @@ pub fn viewer_bar_node(
       |> ignore
       // (the app's own top row while the window has none of the system's: not full screen)
       b.moves_window(By(@ui.window_inset_now)) |> ignore
+      // Progressive blur soft scroll-edge backdrop (zero hidden glass when bar is fully hidden)
+      let edge_h = fn(s : @view.View) {
+        if hidden() && !gone.goes(s) {
+          0.0
+        } else {
+          viewer_bar_h + top() + 12.0
+        }
+      }
+      @lg.liquid_scroll_edge_node(
+        b,
+        edge_h,
+        edge_h,
+        side=Top,
+        bg=fn() { ink().ground },
+        shield=false,
+      )
+      |> ignore
       // (its ground on under the status bar where the system's bars are over the window: a tablet's)
       b.box(fn(s) { s.height(By(fn() { Some(top()) })) |> ignore }) |> ignore
       // (what the window's buttons take of each side, the system's at its left (a Mac's), the app's at its right
@@ -256,6 +262,23 @@ fn bar_words(size : @ui.TextSize, line : @ui.Leading, weight : Int) -> @view.Wor
 }
 
 ///|
+/// Single-layer liquid glass recipe for floating capsules in `viewer_bar_node`: picks `@lg.liquid_viewer_dark_glass`
+/// on dark media grounds (keeping white ink >= 4.5:1) and `@lg.liquid_viewer_clear_glass` on light/paper grounds.
+fn viewer_bar_pill_glass(k : ViewerInk, spot? : (Double, Double)? = None) -> @ui.Glass {
+  // kept in viewer_bar.mbt (outside Track Q2 file boundary)
+  ignore(viewer_bar_share)
+  let r = ((k.ground >> 24) & 0xFFL).to_double()
+  let g = ((k.ground >> 16) & 0xFFL).to_double()
+  let b = ((k.ground >> 8) & 0xFFL).to_double()
+  let lum = (0.299 * r + 0.587 * g + 0.114 * b) / 255.0
+  if lum < 0.35 {
+    @lg.liquid_viewer_dark_glass(spot~, solid=k.ground, sharing=true)
+  } else {
+    @lg.liquid_viewer_clear_glass(spot~, solid=k.ground, sharing=true)
+  }
+}
+
+///|
 /// The way back in `parent`: 32 high, 4 before the chevron and 10 after the words,
 /// at the window's corner following it (bar_back_corner); the chevron and `words` in the ink's own, its hover ground
 /// where the hand is on it (or the keyboard's focus shows); `went` as it is pressed, at the press's moment. Read out a
@@ -285,6 +308,19 @@ fn back_node(
     .radius(By(bar_back_corner))
     .shrink(Is(1.0))
     .min_width(Is(Some(0.0)))
+    .glass(By(fn() {
+      let spot = if b.pressed() && !v.glass_solid() {
+        let (_, _, w, h) = v.placed_window_now()
+        if w > 0.0 && h > 0.0 { Some((w / 2.0, h / 2.0)) } else { None }
+      } else {
+        None
+      }
+      Some(viewer_bar_pill_glass(ink(), spot~))
+    }))
+    .edge(By(fn() { if v.glass_solid() { @lg.liquid_solid_edge() } else { (0.0, 0L) } }))
+    .shadow(By(fn() { glass_control_shadow() }))
+    .shadow_outside(Is(true))
+    .clips(Is(true))
     .ground(By(fn() { if lit() { ink().hover } else { 0L } }))
     |> ignore
     v.box(fn(i) {

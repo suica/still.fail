@@ -279,10 +279,17 @@ test "传输 with keyboard and mouse: a key's name shows by it as the pointer re
     }
     let (mx, my) = (tx + tw / 2.0, ty + th / 2.0)
     let under = t.drawn_rects().filter(fn(r) { r.0 <= mx && mx <= r.0 + r.2 && r.1 <= my && my <= r.1 + r.3 })
-    assert_true(under.length() >= 2, msg="wide \{wide}: under the tip \{Repr(under)}")
-    let top = under[under.length() - 1]
-    assert_true(top.2 < 200.0 && top.3 < 40.0, msg="wide \{wide}: the last under the tip \{Repr(top)}")
+    assert_true(under.length() >= 1, msg="wide \{wide}: under the tip \{Repr(under)}")
     assert_true(under[0].2 >= 300.0, msg="wide \{wide}: the first under the tip \{Repr(under[0])}")
+    let tip_glass = t
+      .drawn_glass()
+      .filter(fn(g) { g.4 == 6 && g.0 <= mx && mx <= g.0 + g.2 && g.1 <= my && my <= g.1 + g.3 })
+    assert_true(tip_glass.length() >= 1, msg="wide \{wide}: glass under the tip \{Repr(tip_glass)}")
+    let top = tip_glass[tip_glass.length() - 1]
+    assert_true(
+      top.2 < 200.0 && top.3 < 40.0,
+      msg="wide \{wide}: the last glass under the tip \{Repr(top)}",
+    )
     // (Escape shuts the tip first, then the list)
     t.key(@ui.key_escape)
     t.draw()

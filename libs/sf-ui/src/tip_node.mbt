@@ -451,12 +451,29 @@ fn tip_look_node(
   )
   .max_width(Is(Some(tip_widest)))
   .radius(Is(tip_round))
-  .ground(By(fn() { tip_ground() }))
-  .edge(By(fn() { tip_edge() }))
-  .shadow(By(fn() {
-    let (blur, dy) = @ui.Shadow::blur_y(Sm)
-    (blur, dy, if library_theme().dark { tip_dark_shadow } else { theme().shadow })
+  .points(Is(false))
+  .glass(By(fn() {
+    if @headless.tip_owns(owner) {
+      Some(@lg.liquid_panel_glass(solid=panel_ground()))
+    } else {
+      None
+    }
   }))
+  .edge(By(fn() {
+    if @headless.tip_owns(owner) && t.glass_solid() {
+      @lg.liquid_overlay_solid_edge()
+    } else {
+      (0.0, 0L)
+    }
+  }))
+  .shadow(By(fn() {
+    if @headless.tip_owns(owner) {
+      glass_overlay_shadow()
+    } else {
+      (0.0, 0.0, 0L)
+    }
+  }))
+  .shadow_outside(Is(true))
   // (its ground in first, its words after, as kit's tip_in and pop_out have them (ground_first): the ground the first
   // half of the way in, the words the second; going, the other way round)
   .alpha(By(fn() {
@@ -485,7 +502,7 @@ fn tip_look_node(
         .shrink(Is(1.0))
         .words(By(fn() { label() }))
         .words_look(By(fn() { words_look(true) }))
-        .ink(By(fn() { tip_words() }))
+        .ink(By(fn() { library_theme().p.text }))
         |> ignore
       })
       |> ignore
@@ -497,7 +514,7 @@ fn tip_look_node(
       })
       |> ignore
     } else {
-      w.words(By(fn() { label() })).words_look(By(fn() { words_look(true) })).ink(By(fn() { tip_words() })) |> ignore
+      w.words(By(fn() { label() })).words_look(By(fn() { words_look(true) })).ink(By(fn() { library_theme().p.text })) |> ignore
     }
     // (its ground handed on among its layer's tips, its words with it: from where the one before was drawn, from its
     // middle)
@@ -533,7 +550,7 @@ fn tip_cap_node(parent : @view.View, cap : String, loc~ : SourceLoc) -> Unit {
     .height(By(fn() { Some(side()) }))
     .min_width(By(fn() { Some(side()) }))
     .radius(Is(tip_cap_round))
-    .ground(By(fn() { mix(tip_words(), tip_cap_ground, tip_ground()) }))
+    .ground(By(fn() { mix(library_theme().p.text, tip_cap_ground, panel_ground()) }))
     |> ignore
     k.box(fn(w) {
       w
@@ -544,7 +561,7 @@ fn tip_cap_node(parent : @view.View, cap : String, loc~ : SourceLoc) -> Unit {
           { size, weight: 500, line, wrap: false, tracking: @view.letters_own, balance: false, max_lines: 0 }
         }),
       )
-      .ink(By(fn() { mix(tip_words(), tip_cap_ink, tip_ground()) }))
+      .ink(By(fn() { mix(library_theme().p.text, tip_cap_ink, panel_ground()) }))
       |> ignore
     })
     |> ignore
@@ -631,11 +648,6 @@ let tip_lift : Double = 0.05
 
 ///|
 let tip_edge_seen : Double = 0.09
-
-///|
-/// A tip's shadow in the dark: the theme's small one (Sm, as tip_look's) in black at 28%: a tip is over its control,
-/// not lifted far.
-let tip_dark_shadow : Int64 = alpha(0x000000FFL, 0.28)
 
 ///|
 /// A tip's caps: how far over and under its words' line they reach (so the tip, tip_key_in round them, is as tall as one

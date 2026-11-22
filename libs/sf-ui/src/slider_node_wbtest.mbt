@@ -103,3 +103,56 @@ test "a slider given the tips' layer: its bubble there, over the knob above the 
   t.run_for(slider_past_ms)
   assert_eq((v.get(), over_it, t.words().length()), (75.0, true, 0))
 }
+
+///|
+test "value_slider_node: lazy clear liquid glass lens on press, zero relayout during drag, and solid/reduced_motion guards" {
+  for mode in [0, 1, 2] {
+    let solid = mode == 1
+    let reduced = mode == 2
+    let v = @signals.signal(40.0)
+    let t = @ui.Tester::new(fn(_c) {  }, w=390.0, h=300.0, platform=0)
+    t.check_looks(false)
+    @ui.set_glass_solid(if solid { Some(true) } else { None })
+    if reduced {
+      t.set_reduce_motion(true)
+    }
+    @ui.set_view_app(
+      fn(root) {
+        root.box(fn(b) {
+          b.padding(Is((20.0, 60.0, 20.0, 0.0))).lines_up(Is(Some(Start))) |> ignore
+          b.box(fn(s) {
+            s.width(Is(Some(300.0))) |> ignore
+            value_slider_node(s, fn() { "音量" }, fn() { v.get() }, fn(x) { v.set(x) }, bubble=false) |> ignore
+          })
+          |> ignore
+        })
+        |> ignore
+      },
+      theme=ui_theme_now,
+    )
+    t.draw()
+    assert_eq(t.drawn_glass().length(), 0, msg="mode=\{mode}: rest must draw 0 glass")
+    let x0 = 20.0 + 10.0 + 0.4 * (300.0 - 20.0)
+    let x1 = 20.0 + 10.0 + 0.75 * (300.0 - 20.0)
+    let y = 60.0 + 14.0
+    t.press_at(x0, y)
+    t.run_for(part_whole_ms)
+    if solid || reduced {
+      assert_eq(t.drawn_glass().length(), 0, msg="mode=\{mode}: solid/reduced must draw 0 glass while held")
+    } else {
+      let glass = t.drawn_glass()
+      assert_eq(glass.length(), 1, msg="mode=\{mode}: held must draw 1 clear liquid glass lens")
+      assert_eq(glass[0].4, 6, msg="mode=\{mode}: lens must be kind == 6")
+    }
+    t.tree_frames_from_now()
+    t.move_to(x1, y)
+    t.run_for(part_whole_ms / 2.0)
+    for f in t.tree_frames() {
+      assert_eq(f.laid, 0, msg="mode=\{mode}: slider drag must not trigger relayout: \{Repr(f)}")
+    }
+    t.release(x1, y)
+    t.run_for(slider_past_ms)
+    assert_eq(t.drawn_glass().length(), 0, msg="mode=\{mode}: settled must return to 0 glass")
+    @ui.set_glass_solid(None)
+  }
+}

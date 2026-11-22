@@ -25,28 +25,33 @@ pub fn pick_bar_node(
   compact? : Bool = false,
   loc~ : SourceLoc,
 ) -> @view.View {
-  parent.box(made_for=loc, fn(bar) {
-    style_node(bar, fn() { pick_bar_look })
-    bar
-    .glass(By(fn() { Some(glass_menu()) }))
-    .edge(By(fn() { if bar.glass_solid() { (control_edge_w, theme().p.line) } else { (0.0, 0L) } }))
-    .shadow(By(fn() { glass_control_shadow() }))
-    .shadow_outside(Is(true))
-    .clips(Is(true))
-    |> ignore
-    for it in items {
-      if !it.mark {
+  let bar = @lg.liquid_pill_group_node(
+    parent,
+    height=40.0,
+    pad=4.0,
+    gap=0.0,
+    solid=panel_ground,
+    fn(bar) {
+      for it in items {
+        if !it.mark {
+          pick_bar_button(bar, it, compact~) |> ignore
+        }
+      }
+      let marks = items.filter(fn(it) { it.mark })
+      if !marks.is_empty() {
+        bar.box(fn(r) { style_node(r, fn() { pick_bar_rule }) }) |> ignore
+      }
+      for it in marks {
         pick_bar_button(bar, it, compact~) |> ignore
       }
-    }
-    let marks = items.filter(fn(it) { it.mark })
-    if !marks.is_empty() {
-      bar.box(fn(r) { style_node(r, fn() { pick_bar_rule }) }) |> ignore
-    }
-    for it in marks {
-      pick_bar_button(bar, it, compact~) |> ignore
-    }
-  })
+    },
+    loc~,
+  )
+  bar
+  .edge(By(fn() { if bar.glass_solid() { (control_edge_w, theme().p.line) } else { (0.0, 0L) } }))
+  .shadow(By(fn() { glass_control_shadow() }))
+  |> ignore
+  bar
 }
 
 ///|
@@ -75,7 +80,8 @@ fn pick_bar_button(
     if !it.mark {
       words_node(v, fn() { it.label }, fn() { pick_bar_words }) |> ignore
     }
-    // (its ripple: MessagePick.kt's clip(Smooth(16)).clickable)
+    // (its ripple: MessagePick.kt's clip(Smooth(16)).clickable, plus outer liquid glass pill GPU spot)
+    @lg.bind_pill_press(v)
     let rippled = press_look(v, Is(pick_bar_round), fn() { false })
     v.gesture(
       @ui.touch_slop(),
@@ -102,11 +108,6 @@ fn pick_bar_button(
     |> ignore
   })
 }
-
-///|
-/// The capsule (pick_bar's): 40 high, 4 in at its ends, round; glass/solid ground and shadow are bound on the node.
-// kept across runs: a value (no field of it changes)
-let pick_bar_look : @ui.Style = @ui.css("row min_h=S10 px=S1 radius=Full align=ACenter")
 
 ///|
 /// A button (pick_button's): 32 high, 12 in, its icon 5 before its words, round.

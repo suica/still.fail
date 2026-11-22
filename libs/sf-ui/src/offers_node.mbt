@@ -316,8 +316,9 @@ pub fn offers_node(
         p
         .beside(anchor.id(), side~, along=Start, offset~, padding=8.0, width=Anchor)
         .max_height(By(fn() { Some(dmax(0.0, over_room(shown).1 - 16.0)) }))
-        .glass(By(fn() { Some(glass_floating()) }))
-        .shadow(By(fn() { (2.0, 1.0, @ui.tree_theme().shadow) }))
+        .glass(By(fn() { Some(@lg.liquid_panel_glass(solid=panel_ground())) }))
+        .edge(By(fn() { if p.glass_solid() { @lg.liquid_overlay_solid_edge() } else { (0.0, 0L) } }))
+        .shadow(By(fn() { glass_overlay_shadow() }))
         .shadow_outside(Is(true))
         .clips(Is(true))
         .alpha(By(fn() { look().alpha }))

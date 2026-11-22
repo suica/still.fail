@@ -46,6 +46,11 @@ impl @hostapi.Host for FakeHost with reduce_motion(self) {
 }
 
 ///|
+impl @hostapi.Host for FakeHost with display_hz(self) {
+  self.display_hz
+}
+
+///|
 /// Scripted system input (drive.mbt): tap a matching notification (6), look for one (7), resize the next frame (8), or
 /// let files go on the window as a file manager does (13: fake_drop_drive).
 impl @hostapi.Host for FakeHost with drive(self, kind, text) {

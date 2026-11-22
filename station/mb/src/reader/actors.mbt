@@ -37,6 +37,7 @@ priv struct QueuedRetry {
 /// An undeclared turn end deferred while the session is held (e.g. during handover `drain` or `starting`).
 priv struct DeferredEnd {
   lost : Bool
+  unheard : Bool
   recorded : String?
 }
 
@@ -109,6 +110,10 @@ priv struct Actor {
   mut overloads : Int
   mut tools_lost : String?
   mut tools_restarts : Int
+  mut tools_retry : Int?
+  mut tools_retries : Int
+  mut tools_retry_at : Double
+  mut tools_retry_deferred : Bool
   mut saying : (String, String)?
   mut last_said : String
   mut turn_text : String
@@ -350,6 +355,10 @@ fn Actors::actor(self : Actors, key : String, runtime : String) -> Actor {
         overloads: 0,
         tools_lost: None,
         tools_restarts: 0,
+        tools_retry: None,
+        tools_retries: 0,
+        tools_retry_at: 0.0,
+        tools_retry_deferred: false,
         saying: None,
         last_said: "",
         turn_text: "",
@@ -422,6 +431,7 @@ fn Actors::mirror(self : Actors, a : Actor) -> Unit {
     "notices": Json::number(a.notices.length().to_double()),
     "waiting": Json::boolean(a.waiting is Some(_)),
     "refill": Json::boolean(a.refill is Some(_)),
+    "toolsRetry": Json::boolean(a.tools_retry is Some(_) || a.tools_retry_deferred),
     "startFailed": Json::boolean(a.failed_handed != "" && !a.paused_cap && !self.turn_wait_queue.contains(a.key)),
     "unread": Json::array(a.unread.map(m => [m.value("thread").unwrap_or(Json::null()), m.value("n").unwrap_or(Json::null()), m.value("ts").unwrap_or(Json::null())])),
     "identity": a.running_identity,

@@ -1947,6 +1947,9 @@ double mb_host_thread_cpu_ms(void) {
   return -1.0;
 }
 
+// The display's refresh rate in Hz (@hostapi.display_hz; 0: unknown).
+double mb_host_display_hz(void) { return 0.0; }
+
 double mb_host_mem_bytes(void) {
   long pages = 0, resident = 0;
   FILE *f = fopen("/proc/self/statm", "r");
