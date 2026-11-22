@@ -1,0 +1,53 @@
+name: Model picker comparison
+on:
+  push:
+    branches: [media/model-picker-comparison-20261122]
+permissions:
+  contents: read
+jobs:
+  picture:
+    strategy:
+      matrix:
+        side: [before, after]
+    runs-on: macos-15
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install MoonBit
+        shell: bash
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Set up the Farview stand-in
+        shell: bash
+        run: |
+          mkdir -p apps/mbui/deps/farview/client
+          cp -a evidence-fvclient/. apps/mbui/deps/farview/client/
+          cp apps/mbui/farview.pin apps/mbui/deps/farview/.pin
+      - name: Use a fictional long configuration
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/mbui/src/sffixture/newchat_fixture.mbt')
+          s = p.read_text()
+          old = 'parts.push(effort_word(effort))'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, 'parts.push("自动 · 高 · 模型选项不可用")'))
+          PY
+          if [ '${{ matrix.side }}' = before ]; then
+            git show 0f1800b122c3d86a2fefe2ca7adb25b4181defdf:apps/mbui/src/sfpages/model_triple.mbt > apps/mbui/src/sfpages/model_triple.mbt
+          fi
+      - name: Draw the model picker
+        shell: bash
+        run: |
+          bash apps/mbui/scripts/screens.sh rec newchat-model
+          cp apps/mbui/out/screens/newchat-model.png model-${{ matrix.side }}.png
+      - uses: actions/upload-artifact@v4
+        continue-on-error: true
+        with:
+          name: model-${{ matrix.side }}
+          path: model-${{ matrix.side }}.png
+          retention-days: 7
