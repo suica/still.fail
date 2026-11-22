@@ -38,6 +38,8 @@ jobs:
           curl -fsSL --retry 3 https://cli.moonbitlang.com/cores/core-latest.tar.gz -o "$RUNNER_TEMP/moon-core.tar.gz"
           tar -xzf "$RUNNER_TEMP/moon-bin.tar.gz" -C "$MOON_HOME"
           tar -xzf "$RUNNER_TEMP/moon-core.tar.gz" -C "$MOON_HOME/lib"
+          chmod +x "$MOON_HOME"/bin/*
+          test ! -f "$MOON_HOME/bin/internal/tcc" || chmod +x "$MOON_HOME/bin/internal/tcc"
           echo "$MOON_HOME/bin" >> "$GITHUB_PATH"
           "$MOON_HOME/bin/moon" version --all
           PATH="$MOON_HOME/bin:$PATH" "$MOON_HOME/bin/moon" -C "$MOON_HOME/lib/core" bundle --warn-list -a --target wasm-gc --quiet
