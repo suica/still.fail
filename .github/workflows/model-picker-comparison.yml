@@ -34,8 +34,10 @@ jobs:
           p = Path('apps/mbui/src/sffixture/newchat_fixture.mbt')
           s = p.read_text()
           old = 'parts.push(effort_word(effort))'
-          assert s.count(old) == 1
-          p.write_text(s.replace(old, 'parts.push("自动 · 高 · 模型选项不可用")'))
+          before, marker, combos = s.partition('fn fix_combos() -> Json {')
+          assert marker and old in combos
+          combos = combos.replace(old, 'parts.push("自动 · 高 · 模型选项不可用")', 1)
+          p.write_text(before + marker + combos)
           PY
           if [ '${{ matrix.side }}' = before ]; then
             git show 0f1800b122c3d86a2fefe2ca7adb25b4181defdf:apps/mbui/src/sfpages/model_triple.mbt > apps/mbui/src/sfpages/model_triple.mbt
