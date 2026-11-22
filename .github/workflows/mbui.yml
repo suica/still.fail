@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     env:
-      MOON_HOME: ${{ runner.temp }}/moon-lowlatency
+      MOON_HOME: ${{ github.workspace }}/.ci-moon-lowlatency
     steps:
       - name: Check out exact PR head
         uses: actions/checkout@v5
