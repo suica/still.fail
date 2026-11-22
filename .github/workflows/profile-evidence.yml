@@ -1,0 +1,74 @@
+name: Profile borrowing evidence
+on:
+  push:
+    branches: [media/profile-borrow-evidence]
+permissions:
+  contents: read
+jobs:
+  picture:
+    runs-on: macos-15
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Install MoonBit
+        run: |
+          curl -fsSL https://cli.moonbitlang.com/install/unix.sh | bash
+          echo "$HOME/.moon/bin" >> "$GITHUB_PATH"
+      - name: Set up a Farview stand-in
+        run: |
+          mkdir -p apps/mbui/deps/farview/client
+          cp -a evidence-fvclient/. apps/mbui/deps/farview/client/
+          cp apps/mbui/farview.pin apps/mbui/deps/farview/.pin
+      - name: Render the changed view and the original view
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/evidence" "$RUNNER_TEMP/inbox"
+          cat > "$RUNNER_TEMP/scene.drive" <<'DRIVE'
+          timeout 20000
+          wait 1800
+          exit
+          DRIVE
+          render() {
+            local label=$1
+            bash apps/mbui/scripts/media-job.sh picture "$RUNNER_TEMP/scene.drive" "$RUNNER_TEMP/job-$label"
+            local key
+            key=$(cat "$RUNNER_TEMP/job-$label/runtime.key")
+            bash apps/mbui/scripts/media-dev-build.sh "$key" "$RUNNER_TEMP/inbox" "" mbui-film-wasm
+            MBUI_FIXTURE=newchat-borrow-model MBUI_WIN=1280x800 MBUI_FILM_SCALE=2 MBUI_LOCALE=zh MBUI_PICTURE_AT=1600 bash "$RUNNER_TEMP/job-$label/run.sh" "$RUNNER_TEMP/evidence/$label.png"
+          }
+          render after
+          git show b69d7aea53440737551a71d3fcafb6f9d7a21eca:apps/mbui/src/sfpages/model_triple.mbt > apps/mbui/src/sfpages/model_triple.mbt
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/mbui/src/sffixture/newchat_fixture.mbt')
+          p.write_text(p.read_text().replace('此 Profile 位于 Maple，尚未分享给此 station。', '此 station 还不能用 Opus 5.5').replace('"action": "去分享"', '"action": "借用"'))
+          PY
+          render before
+          git show HEAD:apps/mbui/src/sfpages/model_triple.mbt > apps/mbui/src/sfpages/model_triple.mbt
+          git show HEAD:apps/mbui/src/sffixture/newchat_fixture.mbt > apps/mbui/src/sffixture/newchat_fixture.mbt
+          python3 - <<'PY'
+          from pathlib import Path
+          p = Path('apps/mbui/src/sffixture/newchat_fixture.mbt')
+          s = p.read_text().replace('将 Maple 的 Fable 5.1 分享至此 station？', '将 claude@example.com 分享至此 station')
+          s = s.replace('["Fable 5.1 由 Maple 上的 Claude 订阅运行。", "分享后，这个连接的会话也用它的额度。"]', '["此 station 当前没有可用于 Opus 5.5 的账号。确认后，会将 Maple 的 Profile「claude@example.com」分享至此 station，供此 station 上的对话使用。", "这是订阅账号：此 station 每次启动 agent 都需要连接 Maple 获取登录，Maple 离线时无法使用。", "不同 station 的环境可能不同（已安装的运行时和工具、网络、文件），分享前请确认此 station 能正常使用这个账号。"]')
+          p.write_text(s)
+          PY
+          cat > "$RUNNER_TEMP/scene.drive" <<'DRIVE'
+          timeout 20000
+          wait 700
+          tap 去分享
+          wait 1400
+          exit
+          DRIVE
+          render confirmation
+      - uses: actions/upload-artifact@v4
+        with:
+          name: profile-borrow-before-after
+          path: ${{ runner.temp }}/evidence/
+          retention-days: 30
