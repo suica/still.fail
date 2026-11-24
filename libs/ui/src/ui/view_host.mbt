@@ -3257,6 +3257,36 @@ fn glyphs_held_drawn() -> Unit {
 /// Optical vertical shift (in points) for a single line of text within its line box:
 /// aligns the visual ink midpoint (Latin cap-height center or CJK em-box center) with the geometric line midpoint
 /// (`line_h * 0.5`), clamped to `[-0.18 * size, 0.18 * size]`.
+///|
+/// A round mark's ground on a line of `lay` whose box is `rect` (a passage lit: View::runs_marks with `round`): about
+/// its words' ink, the same room above it as below, never taller than its line. The line's box sets its words where
+/// its font says (CJK glyphs sit above its middle), so a ground as tall as the box stood further below them than above.
+fn mark_round_rect(
+  lay : RichLayout,
+  rect : (Double, Double, Double, Double),
+  size : Double,
+  cjk : Bool,
+) -> (Double, Double, Double, Double) {
+  let (x, y, w, h) = rect
+  guard size > 0.0 else { return rect }
+  let mid = y + h / 2.0
+  let mut l = -1
+  for i in 0..<lay.line_y.length() {
+    if mid >= lay.line_y[i] && mid < lay.line_y[i] + lay.line_h[i] {
+      l = i
+      break
+    }
+  }
+  guard l >= 0 else { return rect }
+  // (the ink's middle: CJK glyphs' 0.38 em over the baseline, a Latin cap's half: optical_shift_y's)
+  let ink_mid = lay.line_y[l] + lay.line_base[l] - (if cjk { 0.38 * size } else { 0.715 * size * 0.5 })
+  // (as far above it as below, within its line: the nearer of the line's edges sets both)
+  let half = dmax(0.0, dmin(0.75 * size, dmin(ink_mid - y, y + h - ink_mid)))
+  guard half > 0.0 else { return rect }
+  (x, ink_mid - half, w, 2.0 * half)
+}
+
+///|
 fn optical_shift_y(text : String, size : Double, ascent : Double, line_h : Double) -> Double {
   if size <= 0.0 || line_h <= 0.0 {
     return 0.0
@@ -3494,6 +3524,9 @@ fn Ctx::view_made(self : Ctx, tree : @view.Tree, c : @view.Content, edge_after? 
     // paragraph's, Ctx::paint_rich's)
     // (what of it is marked, under all of it and under what is picked of it: View::runs_marks, each part its ground and
     // where it says so a line at its foot, each line of it where that line is drawn)
+    // (a round mark's ground round its words' ink, as tall above it as below: mark_round_rect)
+    let mark_size = view_sp(words_scale, c.words_look.size)
+    let mark_cjk = c.runs_marks.iter().any(fn(m) { m.round > 0.0 }) && words_cjk(lay.text)
     for m in c.runs_marks {
       if m.from < m.to {
         // (one unified inline-span painter: merges adjacent rects on the same line when rounded, rounds start/end caps as
@@ -3516,8 +3549,9 @@ fn Ctx::view_made(self : Ctx, tree : @view.Tree, c : @view.Content, edge_after? 
         } else {
           raw
         }
-        for li, rect in lines {
-          let dx = rich_shift_at(lay, rect.1 + rect.3 / 2.0, center_in)
+        for li, line_rect in lines {
+          let rect = if m.round > 0.0 { mark_round_rect(lay, line_rect, mark_size, mark_cjk) } else { line_rect }
+          let dx = rich_shift_at(lay, line_rect.1 + line_rect.3 / 2.0, center_in)
           if (m.ground & 0xFFL) != 0L {
             self.emit_rect(rect.0 + dx, rect.1, rect.2, rect.3, 0.0, m.ground, 0.0, 0L, 1.0)
             if m.round > 0.0 {
