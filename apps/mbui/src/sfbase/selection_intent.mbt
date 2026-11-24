@@ -203,6 +203,8 @@ pub(all) struct IntentNote {
   id : Int
   draft : String
   row : String
+  /// where its words stand in their message's text (-1 not found): its note's place among the message's
+  at : Int
   station : String
   thread : Double
   selection : String
@@ -226,6 +228,7 @@ let intent_note_serial : Ref[Int] = Ref(0)
 ///|
 pub fn intent_notes_reset() -> Unit {
   intent_notes.set([])
+  intent_note_pointed.set(0)
 }
 
 ///|
@@ -264,12 +267,14 @@ fn intent_note_run(src : Source, id : Int) -> Unit {
 }
 
 ///|
-/// A 戳一下 of `selection`, words of the message of row `row` in chat `draft` (chat `thread` of `station`; the message's
-/// ts and whose it is, as selection_intent_ask's), kept on those words as a note: asked of the core at once. Its id.
+/// A 戳一下 of `selection`, words of the message of row `row` in chat `draft` (`at` where in its text; chat `thread` of
+/// `station`; the message's ts and whose it is, as selection_intent_ask's), kept on those words as a note: asked of the
+/// core at once. Its id.
 pub fn intent_note_ask(
   src : Source,
   draft : String,
   row : String,
+  at : Int,
   station : String,
   thread : Double,
   selection : String,
@@ -284,6 +289,7 @@ pub fn intent_note_ask(
     id,
     draft,
     row,
+    at,
     station,
     thread,
     selection,
@@ -320,7 +326,15 @@ pub fn intent_notes_for(draft : String) -> Array[IntentNote] {
 }
 
 ///|
-/// The notes on the message of row `row` of chat `draft`, in the order they were made.
+/// The notes on the message of row `row` of chat `draft`, in the order their words stand in it (as made where they
+/// stand together), so that the first lit is the first beside it.
 pub fn intent_notes_on(draft : String, row : String) -> Array[IntentNote] {
-  intent_notes.get().filter(fn(n) { n.draft == draft && n.row == row })
+  let on = intent_notes.get().filter(fn(n) { n.draft == draft && n.row == row })
+  on.sort_by(fn(a, b) { if a.at != b.at { a.at.compare(b.at) } else { a.id.compare(b.id) } })
+  on
 }
+
+///|
+/// The note whose card the pointer is on (0 none): its words lit deeper than the others' (intent_note_lits).
+// kept across runs: reset by intent_notes_reset()
+pub let intent_note_pointed : @signals.Signal[Int] = @signals.signal(0, same=fn(a, b) { a == b })

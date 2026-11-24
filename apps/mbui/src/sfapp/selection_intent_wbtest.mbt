@@ -195,7 +195,7 @@ test "大屏, 戳一下 kept on the words picked: they stay lit, its answer a no
 }
 
 ///|
-test "大屏, two 戳一下 on words of one message: each a note of its own, one under the other beside it" {
+test "大屏, two 戳一下 on words of one message: each lit, each a note of its own, in the order the words stand; the pointer on one lights its words deeper" {
   new_run()
   @sf.presenters_reset()
   let src = fixture("chat")
@@ -211,17 +211,30 @@ test "大屏, two 戳一下 on words of one message: each a note of its own, one
     t.click(Button, label="戳一下")
     t.run_for(@ui.move_most_ms)
   }
-  poke("高度先按 90 估")
+  // (the later words first)
   poke("深色模式我一起看")
+  poke("高度先按 90 估")
   let notes = @sfbase.intent_notes_for("ws1/st1:s-c1")
-  assert_eq(notes.map(fn(n) { n.selection }), ["高度先按 90 估", "深色模式我一起看"])
+  assert_eq(notes.length(), 2)
   assert_eq(notes[0].row, notes[1].row, msg="both of one message")
+  assert_eq(@sfbase.intent_notes_on("ws1/st1:s-c1", notes[0].row).map(fn(n) { n.selection }), ["高度先按 90 估", "深色模式我一起看"])
   // (each passage on its ground, as a quote's flash lights one: two grounds drawn)
   let ground = @sf.alpha(@sf.theme().p.accent, @sfbase.picked_alpha)
+  let deeper = @sf.alpha(@sf.theme().p.accent, 2.0 * @sfbase.picked_alpha)
   assert_eq(t.drawn_rects().filter(fn(r) { r.4 == ground }).length(), 2, msg="both lit")
-  let answers = t.words().filter(fn(w) { w.0.contains("轻量模型结合当前对话上下文") })
-  assert_eq(answers.length(), 2, msg="two cards")
-  assert_true(answers[0].2 != answers[1].2, msg="one under the other")
+  let card_of = fn(words : String) {
+    t.words().filter(fn(w) { w.0.contains("关于「" + words + "」") }).last()
+  }
+  guard (card_of("高度先按 90 估"), card_of("深色模式我一起看")) is (Some(first), Some(second)) else { fail("two cards") }
+  assert_true(first.2 < second.2, msg="the first words' note above: \{first.2} over \{second.2}")
+  // (the pointer on the second's card: its words deeper, the first's as they were)
+  t.move_to(second.1 + 20.0, second.2 + second.4 / 2.0)
+  t.run_for(@ui.move_most_ms)
+  assert_eq(t.drawn_rects().filter(fn(r) { r.4 == deeper }).length(), 1, msg="the pointed one deeper")
+  assert_eq(t.drawn_rects().filter(fn(r) { r.4 == ground }).length(), 1, msg="the other as it was")
+  t.move_to(700.0, 700.0)
+  t.run_for(@ui.move_most_ms)
+  assert_eq(t.drawn_rects().filter(fn(r) { r.4 == ground }).length(), 2, msg="both as they were once it is off")
 }
 
 ///|

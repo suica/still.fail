@@ -107,7 +107,8 @@ fn chat_intent_of(
     // (where the list has the room for a margin beside its column: kept on the words picked, lit there, its answer a
     // note in the margin beside their message (intent_note_room); else in a panel beside where it was pressed)
     if intent_notes_fit(width) && p.of.length() == 1 {
-      @sfbase.intent_note_ask(src, draft, p.of[0], r.station, thread, text, m.ts, author) |> ignore
+      let at = m.text.find(text).unwrap_or(-1)
+      @sfbase.intent_note_ask(src, draft, p.of[0], at, r.station, thread, text, m.ts, author) |> ignore
     } else {
       open_selection_intent(src, r, thread, draft, text, m.ts, author, role, from~)
     }

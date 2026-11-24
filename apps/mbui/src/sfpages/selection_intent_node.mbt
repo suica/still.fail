@@ -356,8 +356,12 @@ fn intent_note_room(draft : String, w : Double) -> Double {
 /// The words of the message of row `row` of chat `draft` its notes are of, each lit as it is kept (a quote's flash's
 /// ground at its full).
 fn intent_note_lits(draft : String, row : String) -> Array[(String, Int64)] {
-  let ground = @sf.alpha(@sf.theme().p.accent, @sfbase.picked_alpha)
-  @sfbase.intent_notes_on(draft, row).map(fn(n) { (n.selection, ground) })
+  let accent = @sf.theme().p.accent
+  let ground = @sf.alpha(accent, @sfbase.picked_alpha)
+  // (the one whose card the pointer is on, deeper: which words it is of, among several)
+  let deeper = @sf.alpha(accent, 2.0 * @sfbase.picked_alpha)
+  let pointed = @sfbase.intent_note_pointed.get()
+  @sfbase.intent_notes_on(draft, row).map(fn(n) { (n.selection, if n.id == pointed { deeper } else { ground }) })
 }
 
 ///|
@@ -376,6 +380,21 @@ fn intent_notes_node(p : @view.View, src : Source, draft : String, row : () -> S
 /// 关闭, which takes it off its words), then its answer, or that it is being worked out, or why it failed.
 fn intent_note_card(parent : @view.View, src : Source, n : () -> @sfbase.IntentNote) -> Unit {
   parent.box(fn(card) {
+    // (the pointer on it: its words lit deeper, which of the message's words it is of; let go as it leaves or goes)
+    let id = @signals.untracked(n).id
+    card.reacts(fn() { card.pointed() }, fn(on) {
+      if on {
+        @sfbase.intent_note_pointed.set(id)
+      } else if @signals.untracked(fn() { @sfbase.intent_note_pointed.get() }) == id {
+        @sfbase.intent_note_pointed.set(0)
+      }
+    })
+    card.owns(fn() {
+      if @signals.untracked(fn() { @sfbase.intent_note_pointed.get() }) == id {
+        @sfbase.intent_note_pointed.set(0)
+      }
+    })
+    |> ignore
     @sf.style_node(card, fn() { intent_note_card_style })
     @sf.glass_capsule_node(card, radius=Some(@sf.card_corner), panel=true) |> ignore
     let corner_in = @sf.card_corner - intent_pin_btn / 2.0
