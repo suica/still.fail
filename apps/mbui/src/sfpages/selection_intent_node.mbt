@@ -15,10 +15,10 @@ fn open_selection_intent(
 ) -> Unit {
   @sfbase.selection_intent_ask(src, r.station, thread, draft, selection, message_ts, author, role)
   @sf.panel_nodes(
-    @sf.t("web-main.chat.inferIntent.title"),
-    fn(v, _) { selection_intent_body(v) },
+    "",
+    fn(v, close) { selection_intent_body(v, src, close) },
     from~,
-    foot=fn(v, close) { selection_intent_foot(v, src, close) },
+    heads_itself=true,
     gone=fn() { @sfbase.selection_intent_reset() },
   )
 }
@@ -32,10 +32,21 @@ priv enum IntentViewKind {
 }
 
 ///|
-fn selection_intent_body(v : @view.View) -> Unit {
+fn selection_intent_body(v : @view.View, src : Source, close : () -> Unit) -> Unit {
   let s = @sfbase.selection_intent
-  // (its words text_in in from where the panel's grounds stand, on its title's line, as a small panel's words are)
+  // (its words text_in in from where the panel's grounds stand, as a small panel's words are)
   let column = intent_column.then(@ui.style(px=@sf.room_of(@sf.text_in)))
+  // (its head: 戳一下, and at its end what can be done with the answer as quiet keys, as a pinned answer's head has)
+  v.box(fn(head) {
+    @sf.style_node(head, fn() { intent_head.then(@ui.style(pl=@sf.room_of(@sf.text_in))) })
+    head.box(fn(t) {
+      @sf.style_node(t, fn() { intent_pin_title_wrap }, in_row=true)
+      @sf.words_node(t, fn() { @sf.t("web-main.chat.inferIntent.title") }, fn() { intent_title_words }) |> ignore
+    })
+    |> ignore
+    selection_intent_keys(head, src, close)
+  })
+  |> ignore
   v.pick(
     fn() {
       if s.loading.get() {
@@ -102,29 +113,16 @@ fn intent_outdated() -> Bool {
 }
 
 ///|
-fn selection_intent_foot(v : @view.View, src : Source, close : () -> Unit) -> Unit {
+/// What can be done with the answer, as quiet round keys at the end of the popover's head: 复制 and 固定 while there is
+/// one to have; 重试 in their place once it failed, none where the station must be updated (trying again cannot help).
+fn selection_intent_keys(head : @view.View, src : Source, close : () -> Unit) -> Unit {
   let s = @sfbase.selection_intent
   let failed = fn() { !s.loading.get() && s.error.get() != "" }
-  // (failed: 重试 in the place of 固定 and 复制, which have nothing to act on; none where the station must be updated)
-  v.show(along_row=true, fn() { !failed() }, fn(pin) {
-    @sf.button_node(
-      pin,
-      fn() { @sf.t("web-main.chat.inferIntent.pin") },
-      fn() {
-        if @sfbase.selection_intent_pin() {
-          @sfbase.toast_later(@sf.t("web-main.chat.inferIntent.pinned"))
-          close()
-        }
-      },
-      tone=Ghost,
-      icon="pin",
-      disabled=fn() { s.loading.get() || s.reply.get() == "" },
-    )
-    |> ignore
-  })
-  v.show(along_row=true, fn() { !failed() }, fn(copy) {
-    @sf.button_node(
-      copy,
+  let none = fn() { s.loading.get() || s.reply.get() == "" }
+  head.show(along_row=true, fn() { !failed() }, fn(k) {
+    @sf.icon_button_node(
+      k,
+      "copy",
       fn() { @sf.t("common.copy") },
       fn() {
         let reply = @signals.untracked(fn() { s.reply.get() })
@@ -132,18 +130,37 @@ fn selection_intent_foot(v : @view.View, src : Source, close : () -> Unit) -> Un
           @sfbase.copy_out(reply, said=@sf.t("common.copied"))
         }
       },
-      tone=Primary,
-      disabled=fn() { s.loading.get() || s.reply.get() == "" },
+      size=intent_pin_btn,
+      icon_size=intent_pin_icon,
+      disabled=none,
     )
     |> ignore
   })
-  v.show(along_row=true, fn() { failed() && !intent_outdated() }, fn(retry) {
-    @sf.button_node(
-      retry,
+  head.show(along_row=true, fn() { !failed() }, fn(k) {
+    @sf.icon_button_node(
+      k,
+      "pin",
+      fn() { @sf.t("web-main.chat.inferIntent.pin") },
+      fn() {
+        if @sfbase.selection_intent_pin() {
+          @sfbase.toast_later(@sf.t("web-main.chat.inferIntent.pinned"))
+          close()
+        }
+      },
+      size=intent_pin_btn,
+      icon_size=intent_pin_icon,
+      disabled=none,
+    )
+    |> ignore
+  })
+  head.show(along_row=true, fn() { failed() && !intent_outdated() }, fn(k) {
+    @sf.icon_button_node(
+      k,
+      "refresh",
       fn() { @sf.t("web-main.chat.inferIntent.retry") },
       fn() { @sfbase.selection_intent_retry(src) },
-      tone=Primary,
-      icon="retry",
+      size=intent_pin_btn,
+      icon_size=intent_pin_icon,
     )
     |> ignore
   })
@@ -226,7 +243,15 @@ fn pinned_intent_card(parent : @view.View, p : @sfbase.PinnedIntent) -> Unit {
 
 ///|
 // kept across runs: a value (no field of it changes)
-let intent_column : @ui.Style = @ui.css("w=Full pt=S2 pb=S1 gap=S2")
+let intent_column : @ui.Style = @ui.css("w=Full pt=S1 pb=S3 gap=S2")
+
+///|
+// kept across runs: a value (no field of it changes)
+let intent_head : @ui.Style = @ui.css("row w=Full gap=S1 pt=S1 align=ACenter")
+
+///|
+// kept across runs: a value (no field of it changes)
+let intent_title_words : @ui.TextStyle = @ui.text_style(size=Body, weight=Semibold, color=Fg, wrap=false, w=Full)
 
 ///|
 // kept across runs: a value (no field of it changes)

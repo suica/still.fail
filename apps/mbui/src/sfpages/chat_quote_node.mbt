@@ -322,7 +322,12 @@ fn chat_quote_node(
             @sf.action_box_node(
               pill,
               fn() { @sf.t("web-main.chat.inferIntent") },
-              fn(_) { chat_intent_take(v, src, r, here, draft, rows, @sf.Anchor::Node(end)) },
+              // (beside the pill where it was pressed, as a menu opens from its key: the pill goes as the words are let
+              // go, so where it was is taken now)
+              fn(at) {
+                let (x, y, w, h) = at.placed_window_now()
+                chat_intent_take(v, src, r, here, draft, rows, At(x, y, w, h))
+              },
               fn(b) {
                 @sf.style_node(b, fn() { chat_quote_part })
                 @sf.hover_ground_node(b)
