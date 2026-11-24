@@ -2167,7 +2167,13 @@ fn chat_body_row(
       _ => Some(-1)
     }
   }
-  slot.pick(fn() { chat_body_made_as(row(), piece_now()) }, fn(p, made_as) {
+  // (whether the chat has 戳一下's notes in a margin its rows leave at their right: made with that room and what holds
+  // their notes only then, so that a row pays nothing for them in a chat with none (intent_note_room, intent_notes_node);
+  // its rows made again as its first note comes or its last goes)
+  let notes_of = here.station + ":" + here.session
+  let noted = fn() { intent_note_room(notes_of, (here.width)()) > 0.0 }
+  slot.pick(fn() { (chat_body_made_as(row(), piece_now()), noted()) }, fn(p, made_noted) {
+    let (made_as, with_notes) = made_noted
     let kind = made_as.0
     // (told what holds it as it is made, and again as it is taken for another key)
     // (a slice after a long message's first told by its key and which it is, `k#b`: a name for what holds it alone)
@@ -2189,12 +2195,14 @@ fn chat_body_row(
     let flash_lit = chat_passage_lit(p, whole_key, jump, flash)
     let lit = flash_lit
     // (the words each 戳一下 of it was asked of lit as they are kept, all of them, its notes beside them in the margin at
-    // its right: intent_note_lits, as what its words' nodes mark of what they are in (md_lits), intent_notes_node)
-    let notes_of = here.station + ":" + here.session
-    p.lends(@sf.md_lits, fn() { intent_note_lits(notes_of, whole_key()) }) |> ignore
-    let note_room = fn() { intent_note_room(notes_of, (here.width)()) }
-    p.padding(By(fn() { (0.0, 0.0, note_room(), 0.0) })) |> ignore
-    intent_notes_node(p, src, notes_of, fn() { if slice() > 0 { "" } else { whole_key() } }, note_room, top)
+    // its right: intent_note_lits, as what its words' nodes mark of what they are in (md_lits), intent_notes_node; made
+    // so only in a chat with notes)
+    if with_notes {
+      p.lends(@sf.md_lits, fn() { intent_note_lits(notes_of, whole_key()) }) |> ignore
+      let note_room = fn() { intent_note_room(notes_of, (here.width)()) }
+      p.padding(By(fn() { (0.0, 0.0, note_room(), 0.0) })) |> ignore
+      intent_notes_node(p, src, notes_of, fn() { if slice() > 0 { "" } else { whole_key() } }, note_room, top, stick_top?)
+    }
     let m0 = match @signals.untracked(entry) {
       Said(m) => m
       _ => chat_body_none

@@ -366,10 +366,23 @@ fn intent_note_lits(draft : String, row : String) -> Array[(String, Int64)] {
 
 ///|
 /// In the room at row `p`'s right (intent_note_room's), its notes, `top` down as its words are, one under another: each
-/// 戳一下 of words of its message, its answer as it comes.
-fn intent_notes_node(p : @view.View, src : Source, draft : String, row : () -> String, room : () -> Double, top : () -> Double) -> Unit {
+/// 戳一下 of words of its message, its answer as it comes. `stick_top`: held under the pane's top as a long message
+/// scrolls past, pushed up by its foot, as the row's picture is (message_others_node's), so that its head and keys are
+/// never under the chat's bar while the words it is of are in sight.
+fn intent_notes_node(
+  p : @view.View,
+  src : Source,
+  draft : String,
+  row : () -> String,
+  room : () -> Double,
+  top : () -> Double,
+  stick_top? : () -> Double,
+) -> Unit {
   p.show(fn() { room() > 0.0 && !@sfbase.intent_notes_on(draft, row()).is_empty() }, at_once=true, fn(o) {
     o.over_at(By(fn() { (None, Some(top()), Some(intent_note_edge), None) })) |> ignore
+    if stick_top is Some(at) {
+      o.sticky(By(fn() { Some(at()) })) |> ignore
+    }
     @sf.style_node(o, fn() { intent_notes_column })
     o.each(fn() { @sfbase.intent_notes_on(draft, row()) }, fn(n) { n.id }, fn(cell, n) { intent_note_card(cell, src, fn() { n.get() }) })
   })
