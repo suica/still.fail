@@ -623,9 +623,10 @@ test "待派发: a task carrying a picture pasted here goes to another station c
   t.run_for(@ui.move_most_ms)
   let before = @signals.untracked(fn() { @sfbase.board_drafts_of(src, "ws1") })[0]
   assert_eq((before.title, before.station, before.files.length()), ("换台机器跑", "ws1/st1", 1))
-  // (its panel: where it runs a choice of the workspace's stations, not its own alone)
+  // (its panel: where it runs a choice of the workspace's stations, not its own alone, lined up with its words)
   t.click(Button, label="换台机器跑")
   t.run_for(@ui.move_most_ms)
+  draft_panel_lined_up(t, "Willow", "pasted")
   let (x, y, w, h) = t.get(Button, label="在哪台机器上运行: Willow").rect
   t.tap(x + w / 2.0, y + h / 2.0)
   t.run_for(@ui.move_most_ms)
@@ -643,6 +644,54 @@ test "待派发: a task carrying a picture pasted here goes to another station c
   assert_eq(text(Some(sent[0]), "station"), "ws1/st2")
   assert_eq(items(Some(sent[0]), "attachments").length() + items(Some(sent[0]), "uploads").length(), 1)
   assert_eq(board_faults(t), [])
+}
+
+///|
+/// In the open draft panel (its title 编辑待办, a picture among what it carries, it runs on `station`): its picture
+/// starts where its title's words do, and so does the mark of where it runs (its name one mark and a chooser's gap
+/// past them); under the picture, where it runs and on what are one row of choosers, the model's after the station's.
+fn draft_panel_lined_up(t : @ui.Tester, station : String, at : String) -> Unit raise {
+  guard board_words_at(t, "编辑待办") is Some((x0, y0, _, _)) else { fail("\{at}: no panel title") }
+  // (the first under its title: the cards' under the panel are above it or further down)
+  let tiles = t
+    .drawn_instances()
+    .filter(fn(i) { i[5] == 4.0 && (i[2] - 56.0).abs() < 0.5 && (i[3] - 56.0).abs() < 0.5 && i[1] > y0 })
+  tiles.sort_by_key(fn(i) { i[1] })
+  guard tiles is [tile, ..] else { fail("\{at}: no picture in the panel: \{Repr(t.drawn_images())}") }
+  assert_true((tile[0] - x0).abs() < 0.5, msg="\{at}: picture at \{tile[0]}, title's words at \{x0}")
+  let under = tile[1] + tile[3]
+  let row = t.words().filter(fn(w) { w.2 > under })
+  let names = row.filter(fn(w) { w.0 == station })
+  names.sort_by_key(fn(w) { w.2 })
+  guard names is [(_, nx, ny, nw, nh, _), ..] else { fail("\{at}: no \{station} under the picture: \{Repr(row)}") }
+  // (its mark 14 and a chooser's gap 6 before its name: station_choice_node's `chooser`)
+  assert_true((nx - 20.0 - x0).abs() < 0.5, msg="\{at}: \{station}'s mark at \{nx - 20.0}, title's words at \{x0}")
+  let beside = row.filter(fn(w) { w.1 > nx + nw && (w.2 + w.4 / 2.0 - (ny + nh / 2.0)).abs() < 1.0 })
+  assert_true(beside.length() > 0, msg="\{at}: nothing of the model's on \{station}'s line: \{Repr(row)}")
+}
+
+///|
+test "待派发: a draft's panel lines its words, its picture and where it runs up at one start, where and on what one row, on 大屏 and 小屏" {
+  for (w, h, platform) in [(1440.0, 900.0, 0), (390.0, 844.0, 2)] {
+    let (t, src) = board_at("board", w, h, platform~)
+    // (a picture it carries that this device kept, none of it in the composer here: kept to its own station, its
+    // choice what it is, nothing to press)
+    let still = "mem:test/board-lined-up"
+    @ui.add_image(still, @pixels.png(2, 2, FixedArray::make(16, b'\x60')))
+    @sfbase.writing_picture_put("board-lined", still)
+    @sfbase.board_draft_add(src, "ws1", "带图的待办", "ws1/st1", "Willow", files=[{ id: "board-lined", name: "截图.png" }])
+    |> ignore
+    t.run_for(@ui.move_most_ms)
+    if platform == 2 {
+      t.click(Tab, label="待派发 3")
+      t.run_for(@ui.move_most_ms)
+    }
+    t.click(Button, label="带图的待办")
+    t.run_for(@ui.move_most_ms)
+    assert_true(t.query(Button, label="在哪台机器上运行: Willow") is None)
+    draft_panel_lined_up(t, "Willow", "\{w}")
+    assert_eq(board_faults(t), [])
+  }
 }
 
 ///|

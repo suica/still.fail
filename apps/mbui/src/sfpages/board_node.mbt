@@ -1468,16 +1468,33 @@ fn board_add(a : @view.View, own : BoardOwn, wide : Bool, tips : @sf.TipLayer) -
 
 ///|
 /// Files beside a task: their pictures come from the composer or the device's kept draft, not from board prefs.
+/// `in_panel`: in a panel's body (draft_panel's), the strip out across the room the panel leaves at its sides
+/// (panel_bleed_node), scrolling under its edges, its first file starting where the title's words do
+/// (panel_title_at_node), as what is under it does; no room of its own over its files, the body's gap between them
+/// and the words as between them and what is under them.
 fn board_files_node(
   parent : @view.View,
   src : Source,
   key : () -> String,
   files : () -> Array[@sfbase.BoardFile],
+  in_panel? : Bool = false,
 ) -> Unit {
+  let over = if in_panel { 0.0 } else { 8.0 }
   let strip = fn(p : @view.View) {
-    p.height(Is(Some(64.0))).min_width(Is(Some(0.0))) |> ignore
+    p.height(Is(Some(@sf.waiting_tile_side + over))).min_width(Is(Some(0.0))) |> ignore
+    if in_panel {
+      @sf.style_node(p, fn() { @sf.panel_bleed_node(p) })
+    }
+    // (how far in its first file and its last stand: in a panel the room at its sides and the title's words')
+    let inset = fn() {
+      if in_panel {
+        @sf.panel_sides_at_node(p) + @sf.panel_title_at_node(p)
+      } else {
+        0.0
+      }
+    }
     p.scrolls(@view.Scroll::across(), slop=@ui.touch_slop(), fn(row) {
-      row.row(Is(true)).gap(Is(6.0)).padding(Is((0.0, 8.0, 8.0, 0.0))) |> ignore
+      row.row(Is(true)).gap(Is(6.0)).padding(By(fn() { (inset(), over, 8.0 + inset(), 0.0) })) |> ignore
       let by_id = row.keyed_by(files, fn(f) { f.id })
       row.each(fn() { by_id.keys() }, fn(id) { id }, fn(slot, id) {
         let file = fn() { by_id.get(id.get()).unwrap_or({ id: "", name: "" }) }
@@ -2074,8 +2091,8 @@ fn draft_panel(src : Source, own : BoardOwn, id : String, from : @view.View, sta
     board_words("edit"),
     fn(p, close) {
       p.gap(Is(12.0)) |> ignore
-      // (everything it holds starting on its title's line: the words where they start, the station's and the model's
-      // marks past the room their own grounds keep round them)
+      // (everything it holds starting on its title's line: the words where they start, its pictures, and the station's
+      // mark past the room its own ground keeps round it)
       let words_at = fn() { @sf.panel_title_at_node(p) }
       p.box(fn(fb) {
       fb.padding(By(fn() { (words_at(), 0.0, words_at(), 0.0) })) |> ignore
@@ -2103,13 +2120,21 @@ fn draft_panel(src : Source, own : BoardOwn, id : String, from : @view.View, sta
       @sf.panel_opens_in_node(typed)
       })
       |> ignore
-      board_files_node(p, src, fn() { @sfbase.board_file_key(ws, id) }, fn() { d0.files })
-      // (where it runs, and on what under it)
+      board_files_node(p, src, fn() { @sfbase.board_file_key(ws, id) }, fn() { d0.files }, in_panel=true)
+      // (where it runs and on what, one row of choosers as a new chat's composer has them (new_choosers_node): its
+      // station's, as wide as it needs, then its model's, leaving out its parts where the row has not the room; the
+      // station's mark under the words' start, its ground out past it by the room it keeps round its mark)
       p.box(fn(on) {
-        on.gap(Is(4.0)).lines_up(Is(Some(Start))) |> ignore
-        // (in a box of its own, the choice making none it gives back, put down to the words' first line)
+        on
+        .row(Is(true))
+        .gap(Is(@ui.Space::px(S1)))
+        .lines_up(Is(Some(Middle)))
+        .min_width(Is(Some(0.0)))
+        .margin(By(fn() { ((words_at() - @ui.Space::px(S2)).max(0.0), 0.0, 0.0, 0.0) }))
+        |> ignore
+        // (in a box of its own, the choice making none it gives back, never narrower than it)
         on.box(fn(c) {
-          c.margin(By(fn() { ((words_at() - @ui.Space::px(S1)).max(0.0), 0.0, 0.0, 0.0) })) |> ignore
+          c.shrink(Is(0.0)) |> ignore
           @sfbase.station_choice_node(
             c,
             stations,
@@ -2117,13 +2142,15 @@ fn draft_panel(src : Source, own : BoardOwn, id : String, from : @view.View, sta
             fn(at) { station.set(at) },
             title=board_words("goes-on"),
             label=fn(name) { board_words("goes-on") + ": " + name },
+            chooser=true,
           )
         })
         |> ignore
-        // (what was picked for it on the station it goes to: its own on each)
+        // (what was picked for it on the station it goes to: its own on each; in a row of its own, as wide as what it
+        // says, not stretched across what the row leaves)
         on.pick(fn() { station.get() }, at_once=true, fn(m, st) {
-          m.shrink(Is(1.0)).min_width(Is(Some(0.0))).margin(By(fn() { ((words_at() - @ui.Space::px(S2_5)).max(0.0), 0.0, 0.0, 0.0) })) |> ignore
-          model_triple_node(m, src, st, @sfbase.board_pick_of(id))
+          m.row(Is(true)).shrink(Is(1.0)).min_width(Is(Some(0.0))) |> ignore
+          model_triple_node(m, src, st, @sfbase.board_pick_of(id), small=true)
         })
       })
       |> ignore
